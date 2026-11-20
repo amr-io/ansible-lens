@@ -100,24 +100,36 @@ function convertReturnField(
   };
 }
 
+const convertedReturnFieldsCache = new WeakMap<
+  ModuleReturnFieldSpec | object,
+  Readonly<Record<string, InferredReturnField>>
+>();
+
 function buildModuleReturnFields(
   task: TaskNode,
   registry: IMetadataRegistry,
 ): {
   readonly moduleFqcn: string;
-  readonly perIterationFields: Record<string, InferredReturnField>;
+  readonly perIterationFields: Readonly<Record<string, InferredReturnField>>;
 } {
   const moduleSpec = registry.getModule(task.moduleName);
   const moduleFqcn = moduleSpec ? moduleSpec.fqcn : task.moduleName;
+  if (!moduleSpec) {
+    return { moduleFqcn, perIterationFields: COMMON_RETURN_FIELDS };
+  }
+
+  const cached = convertedReturnFieldsCache.get(moduleSpec);
+  if (cached) {
+    return { moduleFqcn, perIterationFields: cached };
+  }
+
   const perIterationFields: Record<string, InferredReturnField> = {
     ...COMMON_RETURN_FIELDS,
   };
-
-  if (moduleSpec) {
-    for (const [fieldKey, fieldSpec] of Object.entries(moduleSpec.returnFields)) {
-      perIterationFields[fieldKey] = convertReturnField(fieldSpec, moduleSpec.docUrl, fieldKey);
-    }
+  for (const [fieldKey, fieldSpec] of Object.entries(moduleSpec.returnFields)) {
+    perIterationFields[fieldKey] = convertReturnField(fieldSpec, moduleSpec.docUrl, fieldKey);
   }
+  convertedReturnFieldsCache.set(moduleSpec, perIterationFields);
 
   return { moduleFqcn, perIterationFields };
 }
@@ -134,7 +146,7 @@ function inferTaskRegistration(
   const { moduleFqcn, perIterationFields } = buildModuleReturnFields(task, registry);
   const isLoop = task.loop !== undefined || task.loopKind !== undefined;
 
-  let fields: Record<string, InferredReturnField>;
+  let fields: Readonly<Record<string, InferredReturnField>>;
   if (isLoop) {
     const resultsField: InferredReturnField = {
       name: 'results',

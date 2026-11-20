@@ -90,11 +90,13 @@ describe('Intelligence & Linter Performance Budget (< 20ms)', () => {
 
     const graph = new WorkspaceVariableGraph();
 
-    // Warmup pass for JIT stability
-    graph.indexDocument(ast);
-    inferRegisteredVariables(ast, registry);
-    checkProjectIntegrity(ast, '/ws', mockFs);
-    lintAnsibleDocument(ast, registry);
+    // Warmup passes for V8 JIT stability (including under v8 coverage instrumentation)
+    for (let w = 0; w < 5; w++) {
+      graph.indexDocument(ast);
+      inferRegisteredVariables(ast, registry);
+      checkProjectIntegrity(ast, '/ws', mockFs);
+      lintAnsibleDocument(ast, registry);
+    }
 
     const start = performance.now();
     graph.indexDocument(ast);

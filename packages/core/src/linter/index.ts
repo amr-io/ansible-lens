@@ -230,9 +230,18 @@ function collectAllTasks(ast: AnsibleDocumentAst): readonly TaskNode[] {
   return tasks;
 }
 
+const optionLookupCache = new WeakMap<
+  Readonly<Record<string, ModuleOptionSpec>>,
+  ReadonlyMap<string, ModuleOptionSpec>
+>();
+
 function buildOptionLookup(
   options: Readonly<Record<string, ModuleOptionSpec>>,
 ): ReadonlyMap<string, ModuleOptionSpec> {
+  const cached = optionLookupCache.get(options);
+  if (cached) {
+    return cached;
+  }
   const map = new Map<string, ModuleOptionSpec>();
   for (const [key, spec] of Object.entries(options)) {
     map.set(key, spec);
@@ -245,6 +254,7 @@ function buildOptionLookup(
       }
     }
   }
+  optionLookupCache.set(options, map);
   return map;
 }
 
@@ -336,7 +346,7 @@ function validateTaskParams(
   diagnostics: LintDiagnostic[],
 ): void {
   const optionLookup = buildOptionLookup(options);
-  const allCandidateNames = collectOptionNamesAndAliases(options);
+  let allCandidateNames: readonly string[] | undefined;
   const presentNames = new Set(params.map((p) => p.name));
 
   for (const [optKey, optSpec] of Object.entries(options)) {
@@ -360,6 +370,7 @@ function validateTaskParams(
 
     const spec = optionLookup.get(param.name);
     if (!spec) {
+      allCandidateNames ??= collectOptionNamesAndAliases(options);
       const closest = findClosestMatch(param.name, allCandidateNames);
       const quickFixes: QuickFixAction[] = closest
         ? [
