@@ -1,0 +1,26 @@
+---
+- name: Install nginx package
+  ansible.builtin.apt:
+    name: "{{ nginx_package_name }}"
+    state: present
+    update_cache: true
+
+- name: Deploy nginx configuration template
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    mode: '0644'
+  notify:
+    - Restart nginx
+
+- name: Copy index HTML file
+  ansible.builtin.copy:
+    src: index.html
+    dest: "{{ document_root }}/index.html"
+    mode: '0644'
+
+- name: Ensure nginx service is started
+  ansible.builtin.service:
+    name: "{{ nginx_service_name }}"
+    state: started
+    enabled: true

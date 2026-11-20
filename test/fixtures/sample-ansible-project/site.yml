@@ -1,0 +1,48 @@
+---
+- name: Deploy web application stack
+  hosts: webservers
+  become: true
+  vars:
+    http_port: 8443
+    enable_tls: true
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - webserver
+  tasks:
+    - name: Check nginx configuration status
+      ansible.builtin.stat:
+        path: /etc/nginx/nginx.conf
+      register: nginx_stat
+
+    - name: Copy static index page
+      ansible.builtin.copy:
+        src: roles/webserver/files/index.html
+        dest: /var/www/html/index.html
+        mode: '0644'
+      notify:
+        - Reload nginx
+
+    - name: Display nginx stat output
+      ansible.builtin.debug:
+        msg: "Nginx config exists: {{ nginx_stat.stat.exists | default(false) }}"
+
+    - name: Inspect running services via command
+      ansible.builtin.command:
+        cmd: systemctl status nginx
+      register: svc_check
+      changed_when: false
+
+    - name: Check multiple ports in loop
+      ansible.builtin.wait_for:
+        port: "{{ item }}"
+        timeout: 5
+      loop:
+        - 80
+        - 443
+      register: port_checks
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: "{{ nginx_service_name }}"
+        state: reloaded
