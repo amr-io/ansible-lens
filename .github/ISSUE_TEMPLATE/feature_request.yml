@@ -1,0 +1,19 @@
+name: Feature Request
+description: Propose a new lint rule, collection pack, or language server capability
+title: 'feat: '
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case
+      description: Describe the workflow or Ansible feature you would like supported.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe how Ansible Lens should behave.
+    validations:
+      required: true
