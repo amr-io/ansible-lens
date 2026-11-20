@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "amr-vibe",
   "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/amr-vibe/ansible-lens.git"
@@ -16,11 +17,49 @@
     "Linters",
     "Programming Languages"
   ],
+  "keywords": [
+    "ansible",
+    "yaml",
+    "jinja2",
+    "linter",
+    "lsp"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "onLanguage:ansible",
+    "workspaceContains:ansible.cfg"
+  ],
   "main": "./dist/extension.cjs",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ansibleLens.openOfficialDocs",
+        "title": "Ansible Lens: Open Official Docs"
+      },
+      {
+        "command": "ansibleLens.refreshMetadata",
+        "title": "Ansible Lens: Refresh Collection Metadata"
+      },
+      {
+        "command": "ansibleLens.convertFileToFqcn",
+        "title": "Ansible Lens: Convert File to FQCN"
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "text.jinja.ansible-lens.injection",
+        "path": "./syntaxes/jinja2.injection.tmLanguage.json",
+        "injectTo": [
+          "source.yaml",
+          "source.ansible"
+        ]
+      }
+    ]
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "package:vsix": "npx @vscode/vsce package --no-dependencies -o ansible-lens-0.1.0.vsix"
+    "build": "tsc -b tsconfig.json && node scripts/bundle.mjs",
+    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.json --noEmit",
+    "package:vsix": "npm run build && npx @vscode/vsce package --no-dependencies -o ansible-lens-0.1.0.vsix"
   },
   "dependencies": {
     "@ansible-lens/core": "0.1.0",

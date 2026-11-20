@@ -1,0 +1,132 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ansible Lens Jinja2 Injection",
+  "scopeName": "text.jinja.ansible-lens.injection",
+  "injectTo": ["source.yaml", "source.ansible"],
+  "injectionSelector": "L:source.yaml, L:source.ansible",
+  "patterns": [
+    {
+      "include": "#jinja-comment"
+    },
+    {
+      "include": "#jinja-statement"
+    },
+    {
+      "include": "#jinja-expression"
+    }
+  ],
+  "repository": {
+    "jinja-comment": {
+      "name": "comment.block.jinja.ansible-lens",
+      "begin": "\\{#-?",
+      "end": "-?#\\}"
+    },
+    "jinja-statement": {
+      "name": "meta.embedded.block.jinja.statement.ansible-lens",
+      "begin": "\\{%-?",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.tag.begin.jinja.ansible-lens"
+        }
+      },
+      "end": "-?%\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.tag.end.jinja.ansible-lens"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#jinja-body"
+        }
+      ]
+    },
+    "jinja-expression": {
+      "name": "meta.embedded.block.jinja.expression.ansible-lens",
+      "begin": "\\{\\{-?",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.expression.begin.jinja.ansible-lens"
+        }
+      },
+      "end": "-?\\}\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.expression.end.jinja.ansible-lens"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#jinja-body"
+        }
+      ]
+    },
+    "jinja-body": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.jinja.ansible-lens",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.jinja.ansible-lens",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.jinja.ansible-lens",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.jinja.ansible-lens",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "constant.numeric.jinja.ansible-lens",
+          "match": "\\b\\d+(?:\\.\\d+)?\\b"
+        },
+        {
+          "name": "constant.language.boolean.jinja.ansible-lens",
+          "match": "\\b(?:true|false|True|False|none|None)\\b"
+        },
+        {
+          "match": "(\\|)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.pipe.jinja.ansible-lens"
+            },
+            "2": {
+              "name": "support.function.filter.jinja.ansible-lens"
+            }
+          }
+        },
+        {
+          "match": "\\b(is)\\s+(?:(not)\\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.logical.jinja.ansible-lens"
+            },
+            "2": {
+              "name": "keyword.operator.logical.jinja.ansible-lens"
+            },
+            "3": {
+              "name": "support.function.test.jinja.ansible-lens"
+            }
+          }
+        },
+        {
+          "name": "keyword.control.jinja.ansible-lens",
+          "match": "\\b(?:if|elif|else|endif|for|endfor|in|not|and|or|set|block|endblock|macro|endmacro|filter|endfilter|raw|endraw)\\b"
+        },
+        {
+          "name": "variable.other.jinja.ansible-lens",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\b"
+        }
+      ]
+    }
+  }
+}

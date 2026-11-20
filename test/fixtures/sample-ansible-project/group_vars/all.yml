@@ -1,0 +1,5 @@
+---
+http_port: 80
+app_name: ansible-lens-demo
+nginx_worker_processes: 2
+deploy_env: production
