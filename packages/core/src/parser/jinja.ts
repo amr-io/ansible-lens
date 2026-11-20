@@ -52,7 +52,7 @@ const PUNCTUATION_CHARS = new Set(['.', ',', ':', '(', ')', '[', ']', '{', '}'])
 
 function isIdentStart(ch: string): boolean {
   const code = ch.charCodeAt(0);
-  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95 /* _ */;
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95; /* _ */
 }
 
 function isIdentPart(ch: string): boolean {
