@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-20T22:56:40.527Z",
+  "ansibleCoreVersion": "2.16.3",
+  "collections": {
+    "ansible.builtin": {
+      "collection": "ansible.builtin",
+      "version": "2.16.3",
+      "fileName": "ansible.builtin.json.gz",
+      "sha256": "27028336050bda131836c8f88c6e1908adb222b4c5689437387353c601b0f302",
+      "sizeBytes": 76804,
+      "moduleCount": 71
+    }
+  }
+}
