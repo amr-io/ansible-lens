@@ -234,6 +234,14 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
       })) ?? [];
     expect(refs.length).toBeGreaterThanOrEqual(4);
 
+    const waitForDiagnostics = async (targetUri: string, timeoutMs = 2000): Promise<unknown[]> => {
+      const deadline = Date.now() + timeoutMs;
+      while (!publishedDiagnostics.has(targetUri) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      return publishedDiagnostics.get(targetUri) ?? [];
+    };
+
     // 8. Smart Hybrid non-interference on k8s-deployment.yml
     const k8sPath = path.join(FIXTURE_ROOT, 'k8s-deployment.yml');
     const k8sUri = fsPathToUri(k8sPath);
@@ -246,8 +254,7 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
         text: k8sText,
       },
     });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(publishedDiagnostics.get(k8sUri) ?? []).toEqual([]);
+    expect(await waitForDiagnostics(k8sUri)).toEqual([]);
     expect(service.getCompletions(k8sUri, { line: 0, character: 0 }, k8sText)).toEqual([]);
 
     // 9. Diagnostics & CodeActions (Quick-Fix + Convert File to FQCN) on short module names
@@ -275,8 +282,7 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
         text: shortPlayText,
       },
     });
-    await new Promise((r) => setTimeout(r, 20));
-    const diags = publishedDiagnostics.get(shortPlayUri) ?? [];
+    const diags = await waitForDiagnostics(shortPlayUri);
     expect(diags.length).toBeGreaterThanOrEqual(2);
 
     const copyLinePos = findLineAndChar(shortPlayText, 'copy:');
