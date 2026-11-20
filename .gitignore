@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+coverage/
+*.vsix
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+.vscode-test/

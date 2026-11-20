@@ -1,0 +1,27 @@
+name: Bug Report
+description: Report a bug in Ansible Lens parser, metadata loader, linter, or VS Code extension
+title: 'bug: '
+labels: ['bug']
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal Reproducible Playbook / YAML
+      description: Paste a minimal YAML snippet that reproduces the issue.
+      render: yaml
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment (OS, VS Code version, Ansible Lens version)
+      placeholder: 'Windows 11 / Ubuntu 24.04, VS Code 1.95, Ansible Lens 0.1.0'
+    validations:
+      required: true
