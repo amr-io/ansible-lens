@@ -26,8 +26,9 @@ describe('@ansible-lens/core contracts scaffold', () => {
   });
 
   it('registers and resolves module metadata by FQCN and short name', () => {
-    const registry = createDefaultMetadataRegistry();
-    expect(registry).toBeInstanceOf(MetadataRegistry);
+    const defaultRegistry = createDefaultMetadataRegistry();
+    expect(defaultRegistry).toBeInstanceOf(MetadataRegistry);
+    const registry = new MetadataRegistry();
 
     const copyMod: ModuleMetadataSpec = {
       fqcn: 'ansible.builtin.copy',
@@ -35,7 +36,8 @@ describe('@ansible-lens/core contracts scaffold', () => {
       collection: 'ansible.builtin',
       shortDescription: 'Copy files to remote locations',
       description: 'Copies a file from the local box to remote locations.',
-      docUrl: 'https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html',
+      docUrl:
+        'https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html',
       options: {},
       returnFields: {},
     };
