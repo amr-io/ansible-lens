@@ -88,8 +88,19 @@ export class MetadataRegistry implements IMetadataRegistry {
 }
 
 function resolveBundledDataPath(fileName: string): string | undefined {
-  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  let currentDir = process.cwd();
+  try {
+    const metaUrl = import.meta.url;
+    if (typeof metaUrl === 'string' && metaUrl.startsWith('file:')) {
+      currentDir = path.dirname(fileURLToPath(metaUrl));
+    }
+  } catch (err) {
+    void err;
+  }
   const candidates = [
+    // From bundled dist/ (packages/client/dist/data/)
+    path.resolve(currentDir, 'data', fileName),
+    path.resolve(currentDir, '../data', fileName),
     // From packages/core/src/metadata/ -> packages/core/data/
     path.resolve(currentDir, '../../data', fileName),
     // From packages/core/dist/metadata/ -> packages/core/data/
