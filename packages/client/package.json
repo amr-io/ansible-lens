@@ -25,6 +25,6 @@
   "dependencies": {
     "@ansible-lens/core": "0.1.0",
     "@ansible-lens/server": "0.1.0",
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^11.0.0"
   }
 }
