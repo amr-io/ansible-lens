@@ -1,0 +1,82 @@
+name: Build Static Metadata Packs
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-metadata:
+    name: Generate & Publish Metadata Packs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Node dependencies and build metadata-builder
+        run: |
+          npm ci
+          npm run build --workspace=packages/core
+          npm run build --workspace=scripts/metadata-builder
+
+      - name: Install ansible-core and Top 10 Galaxy collections
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core
+          ansible-galaxy collection install \
+            ansible.posix \
+            community.general \
+            community.docker \
+            community.crypto \
+            ansible.windows \
+            amazon.aws \
+            kubernetes.core \
+            community.mysql \
+            community.postgresql \
+            ansible.utils
+
+      - name: Generate compressed .json.gz packs and SHA-256 manifest.json
+        run: |
+          mkdir -p dist-metadata
+          node scripts/metadata-builder/dist/index.js --out-dir dist-metadata
+
+      - name: Upload metadata pack artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ansible-lens-metadata-packs
+          path: dist-metadata/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish metadata packs to metadata-latest release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: metadata-latest
+          name: Static Metadata Packs (Latest)
+          prerelease: false
+          make_latest: 'false'
+          files: |
+            dist-metadata/*.json.gz
+            dist-metadata/manifest.json
