@@ -18,7 +18,7 @@ import {
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
 const NESTED_ROOT = path.join(REPO_ROOT, 'test/fixtures/nested-monorepo-project');
-const ROLE_TASKS = path.join(NESTED_ROOT, 'ansible/roles/overleaf/tasks/main.yml');
+const ROLE_TASKS = path.join(NESTED_ROOT, 'ansible/roles/webapp/tasks/main.yml');
 const ROLE_URI = fsPathToUri(ROLE_TASKS);
 
 function createService(): AnsibleLanguageService {
@@ -49,13 +49,13 @@ function editOf(item: CompletionItem | undefined): TextEdit {
 }
 
 describe('completions with explicit textEdit ranges (YAML word-pattern safe)', () => {
-  it('suggests `stat` after `when: overleaf_version_file.` with an empty replace range', () => {
+  it('suggests `stat` after `when: webapp_version_file.` with an empty replace range', () => {
     const service = createService();
     const { text, position } = withAppended([
       '- name: New task',
       '  ansible.builtin.debug:',
       '    msg: hi',
-      '  when: overleaf_version_file.',
+      '  when: webapp_version_file.',
     ]);
     const items = service.getCompletions(ROLE_URI, position, text);
     expect(labels(items)).toContain('stat');
@@ -65,13 +65,13 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
     expect(edit.range.end).toEqual(position);
   });
 
-  it('resolves nested partial prefixes like `overleaf_version_file.stat.e`', () => {
+  it('resolves nested partial prefixes like `webapp_version_file.stat.e`', () => {
     const service = createService();
     const { text, position } = withAppended([
       '- name: New task',
       '  ansible.builtin.debug:',
       '    msg: hi',
-      '  when: overleaf_version_file.stat.e',
+      '  when: webapp_version_file.stat.e',
     ]);
     const items = service.getCompletions(ROLE_URI, position, text);
     expect(labels(items)).toContain('exists');
@@ -81,13 +81,13 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
     expect(edit.range.end).toEqual(position);
   });
 
-  it('lists `stat` children after a trailing dot (`overleaf_version_file.stat.`)', () => {
+  it('lists `stat` children after a trailing dot (`webapp_version_file.stat.`)', () => {
     const service = createService();
     const { text, position } = withAppended([
       '- name: New task',
       '  ansible.builtin.debug:',
       '    msg: hi',
-      '  when: overleaf_version_file.stat.',
+      '  when: webapp_version_file.stat.',
     ]);
     const items = service.getCompletions(ROLE_URI, position, text);
     expect(labels(items)).toEqual(expect.arrayContaining(['exists', 'isdir', 'mode']));
@@ -101,9 +101,9 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
         '  ansible.builtin.debug:',
         '    msg: hi',
         `  ${key}:`,
-        '    - overleaf_version_file.stat.exists',
+        '    - webapp_version_file.stat.exists',
         '    # a comment between items',
-        '    - overleaf_version_file.stat.',
+        '    - webapp_version_file.stat.',
       ]);
       const items = service.getCompletions(ROLE_URI, position, text);
       expect(labels(items), key).toEqual(expect.arrayContaining(['exists', 'isdir']));
@@ -118,7 +118,7 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
       '  ansible.builtin.debug:',
       '    msg: hi',
       '  when:',
-      '  - overleaf_version_file.st',
+      '  - webapp_version_file.st',
     ]);
     expect(labels(service.getCompletions(ROLE_URI, seq.position, seq.text))).toContain('stat');
 
@@ -127,8 +127,8 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
       '  ansible.builtin.debug:',
       '    msg: hi',
       '  when: >',
-      '    overleaf_version_file.stat.exists and',
-      '    overleaf_version_file.',
+      '    webapp_version_file.stat.exists and',
+      '    webapp_version_file.',
     ]);
     expect(labels(service.getCompletions(ROLE_URI, folded.position, folded.text))).toContain(
       'stat',
@@ -140,7 +140,7 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
     const { text, position } = withAppended([
       '- name: New task',
       '  ansible.builtin.copy:',
-      '    src: overleaf_version_file.',
+      '    src: webapp_version_file.',
     ]);
     const items = service.getCompletions(ROLE_URI, position, text);
     expect(items.some((i) => i.label === 'stat' && i.kind === CompletionItemKind.Field)).toBe(
@@ -155,18 +155,18 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
       '  ansible.builtin.debug:',
       '    msg: hi',
       '  when:',
-      '    - overleaf_ver',
+      '    - webapp_ver',
     ]);
     const varItems = service.getCompletions(ROLE_URI, vars.position, vars.text);
-    const reg = varItems.find((i) => i.label === 'overleaf_version_file');
-    expect(editOf(reg).range.start.character).toBe(vars.position.character - 'overleaf_ver'.length);
+    const reg = varItems.find((i) => i.label === 'webapp_version_file');
+    expect(editOf(reg).range.start.character).toBe(vars.position.character - 'webapp_ver'.length);
 
     const filters = withAppended([
       '- name: New task',
       '  ansible.builtin.debug:',
       '    msg: hi',
       '  when:',
-      '    - overleaf_version_file.stat.mode | def',
+      '    - webapp_version_file.stat.mode | def',
     ]);
     const filterItems = service.getCompletions(ROLE_URI, filters.position, filters.text);
     expect(labels(filterItems)).toContain('default');
@@ -176,7 +176,7 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
       '- name: New task',
       '  ansible.builtin.debug:',
       '    msg: hi',
-      '  when: overleaf_version_file is not ',
+      '  when: webapp_version_file is not ',
     ]);
     expect(labels(service.getCompletions(ROLE_URI, tests.position, tests.text))).toContain(
       'succeeded',
@@ -222,10 +222,10 @@ describe('Pylance-style Ctrl+Click module docs and zero permanent underlines', (
     const service = createService();
     const text = fs.readFileSync(ROLE_TASKS, 'utf8');
     const lines = text.split('\n');
-    const line = lines.findIndex((l) => l.includes('- not overleaf_version_file.stat.isdir'));
-    const character = (lines[line] ?? '').indexOf('overleaf_version_file') + 3;
+    const line = lines.findIndex((l) => l.includes('- not webapp_version_file.stat.isdir'));
+    const character = (lines[line] ?? '').indexOf('webapp_version_file') + 3;
     const locs = service.getDefinition(ROLE_URI, { line, character }, text) as Location[];
-    const registerLine = lines.findIndex((l) => l.includes('register: overleaf_version_file'));
+    const registerLine = lines.findIndex((l) => l.includes('register: webapp_version_file'));
     expect(locs[0]?.uri).toBe(ROLE_URI);
     expect(locs[0]?.range.start.line).toBe(registerLine);
   });

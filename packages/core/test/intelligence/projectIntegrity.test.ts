@@ -214,25 +214,25 @@ describe('checkProjectIntegrity', () => {
   it('discovers nested monorepo Ansible root (mcleaf/ansible/ opened from mcleaf/) and honors ansible.cfg roles_path & inventory', () => {
     const fs = createMemoryFs(
       {
-        '/mcleaf/ansible/ansible.cfg': [
+        '/monorepo/ansible/ansible.cfg': [
           '[defaults]',
           'roles_path = ./custom_roles:../shared_roles',
           'inventory = ./inventories/prod/hosts.ini',
         ].join('\n'),
-        '/mcleaf/ansible/inventories/prod/hosts.ini': '[mcleaf_app]\napp1.internal\n',
-        '/mcleaf/ansible/custom_roles/nginx_edge/tasks/main.yml':
+        '/monorepo/ansible/inventories/prod/hosts.ini': '[mcleaf_app]\napp1.internal\n',
+        '/monorepo/ansible/custom_roles/nginx_edge/tasks/main.yml':
           '- name: edge task\n  ansible.builtin.debug:\n    msg: ok\n',
-        '/mcleaf/ansible/custom_roles/nginx_edge/handlers/main.yml':
+        '/monorepo/ansible/custom_roles/nginx_edge/handlers/main.yml':
           '- name: Reload edge\n  ansible.builtin.debug:\n    msg: reload\n',
-        '/mcleaf/shared_roles/base_security/tasks/main.yml':
+        '/monorepo/shared_roles/base_security/tasks/main.yml':
           '- name: sec task\n  ansible.builtin.debug:\n    msg: sec\n',
-        '/mcleaf/ansible/files/banner.txt': 'Welcome to McLeaf',
-        '/mcleaf/ansible/templates/edge.conf.j2': 'server {}',
+        '/monorepo/ansible/files/banner.txt': 'Welcome to McLeaf',
+        '/monorepo/ansible/templates/edge.conf.j2': 'server {}',
       },
-      ['/mcleaf/ansible/custom_roles/nginx_edge', '/mcleaf/shared_roles/base_security'],
+      ['/monorepo/ansible/custom_roles/nginx_edge', '/monorepo/shared_roles/base_security'],
     );
 
-    const ast = makeAst('file:///mcleaf/ansible/playbooks/site.yml', 'playbook', {
+    const ast = makeAst('file:///monorepo/ansible/playbooks/site.yml', 'playbook', {
       plays: [
         makePlay({
           hosts: 'mcleaf_app',
@@ -255,22 +255,22 @@ describe('checkProjectIntegrity', () => {
       ],
     });
 
-    // Opened from outer monorepo root `/mcleaf`
-    const diagnostics = checkProjectIntegrity(ast, '/mcleaf', fs);
+    // Opened from outer monorepo root `/monorepo`
+    const diagnostics = checkProjectIntegrity(ast, '/monorepo', fs);
     expect(diagnostics).toEqual([]);
   });
 
   it('discovers nested monorepo Ansible root via roles/ and group_vars/ markers even without ansible.cfg and emits only 1 missing-role diagnostic when missing', () => {
     const fs = createMemoryFs(
       {
-        '/mcleaf/ansible/group_vars/all.yml': 'env: prod\n',
-        '/mcleaf/ansible/roles/present_role/tasks/main.yml':
+        '/monorepo/ansible/group_vars/all.yml': 'env: prod\n',
+        '/monorepo/ansible/roles/present_role/tasks/main.yml':
           '- name: ok\n  ansible.builtin.debug:\n    msg: ok\n',
       },
-      ['/mcleaf/ansible/roles/present_role', '/mcleaf/ansible/group_vars'],
+      ['/monorepo/ansible/roles/present_role', '/monorepo/ansible/group_vars'],
     );
 
-    const ast = makeAst('file:///mcleaf/ansible/site.yml', 'playbook', {
+    const ast = makeAst('file:///monorepo/ansible/site.yml', 'playbook', {
       plays: [
         makePlay({
           hosts: 'all',
@@ -282,7 +282,7 @@ describe('checkProjectIntegrity', () => {
       ],
     });
 
-    const diagnostics = checkProjectIntegrity(ast, '/mcleaf', fs);
+    const diagnostics = checkProjectIntegrity(ast, '/monorepo', fs);
     const missingRoleDiags = diagnostics.filter((d) => d.ruleId === 'missing-role');
     expect(missingRoleDiags).toHaveLength(1);
     expect(missingRoleDiags[0]?.message).toContain('truly_missing_role');

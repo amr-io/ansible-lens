@@ -13,7 +13,7 @@ const sharedOptions = {
   platform: 'node',
   target: 'node20',
   format: 'cjs',
-  sourcemap: true,
+  sourcemap: false,
   minify: false,
   logLevel: 'info',
   banner: {
@@ -28,18 +28,30 @@ const sharedOptions = {
   },
 };
 
-await esbuild.build({
+// Shipped bundles (extension host + language server) are minified without source maps so the
+// published `.vsix` stays small; test-only bundles below keep readable output for debugging.
+const shippedOptions = {
   ...sharedOptions,
+  minify: true,
+  legalComments: 'none',
+};
+
+await esbuild.build({
+  ...shippedOptions,
   entryPoints: [path.resolve(clientRoot, 'src/extension.ts')],
   outfile: path.resolve(clientRoot, 'dist/extension.cjs'),
   external: ['vscode'],
 });
 
 await esbuild.build({
-  ...sharedOptions,
+  ...shippedOptions,
   entryPoints: [path.resolve(repoRoot, 'packages/server/src/server.ts')],
   outfile: path.resolve(clientRoot, 'dist/server.cjs'),
 });
+
+for (const staleMap of ['extension.cjs.map', 'server.cjs.map']) {
+  fs.rmSync(path.resolve(clientRoot, 'dist', staleMap), { force: true });
+}
 
 const coreDataDir = path.resolve(repoRoot, 'packages/core/data');
 const distDataDir = path.resolve(clientRoot, 'dist/data');
@@ -52,6 +64,7 @@ if (fs.existsSync(coreDataDir)) {
 
 await esbuild.build({
   ...sharedOptions,
+  sourcemap: true,
   entryPoints: [path.resolve(clientRoot, 'test/e2e/suite.ts')],
   outfile: path.resolve(clientRoot, 'dist/e2e/suite.cjs'),
   external: ['vscode'],
@@ -59,6 +72,7 @@ await esbuild.build({
 
 await esbuild.build({
   ...sharedOptions,
+  sourcemap: true,
   entryPoints: [path.resolve(clientRoot, 'test/e2e/runTest.ts')],
   outfile: path.resolve(clientRoot, 'dist/e2e/runTest.cjs'),
   external: ['@vscode/test-electron'],

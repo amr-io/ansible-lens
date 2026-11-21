@@ -6,11 +6,10 @@ test/**
 scripts/**
 tsconfig.json
 tsconfig.tsbuildinfo
-dist/*.d.ts
-dist/*.d.ts.map
-dist/*.js
-dist/*.js.map
-**/*.ts
-!**/*.d.ts
-*.vsix
 dist/e2e/**
+dist/*.js
+**/*.ts
+**/*.map
+**/*.d.ts
+*.vsix
+media/icon.svg

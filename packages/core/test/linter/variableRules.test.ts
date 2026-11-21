@@ -77,32 +77,32 @@ describe('undefined-variable and var-naming[no-role-prefix] rules & Quick-Fixes'
 
   it('warns on var-naming[no-role-prefix] in roles/<role>/defaults/, vars/, and tasks/ register:/set_fact: with 1-click Quick-Fix', () => {
     const defaultsAst = parseAnsibleDocument(
-      'file:///ws/roles/overleaf/defaults/main.yml',
-      ['---', 'overleaf_port: 8080', 'listen_address: 0.0.0.0', '_internal_flag: true'].join('\n'),
+      'file:///ws/roles/webapp/defaults/main.yml',
+      ['---', 'webapp_port: 8080', 'listen_address: 0.0.0.0', '_internal_flag: true'].join('\n'),
       'role-defaults',
     );
     const defaultsDiags = lintAnsibleDocument(defaultsAst, registry);
     const prefixDiags = defaultsDiags.filter((d) => d.ruleId === 'var-naming[no-role-prefix]');
     expect(prefixDiags).toHaveLength(1);
-    expect(prefixDiags[0]?.message).toContain("Variable 'listen_address' in role 'overleaf'");
-    expect(prefixDiags[0]?.quickFixes[0]?.title).toBe("Rename to 'overleaf_listen_address'");
-    expect(prefixDiags[0]?.quickFixes[0]?.edits[0]?.newText).toBe('overleaf_listen_address');
+    expect(prefixDiags[0]?.message).toContain("Variable 'listen_address' in role 'webapp'");
+    expect(prefixDiags[0]?.quickFixes[0]?.title).toBe("Rename to 'webapp_listen_address'");
+    expect(prefixDiags[0]?.quickFixes[0]?.edits[0]?.newText).toBe('webapp_listen_address');
 
     const tasksYaml = [
       '---',
       '- name: Check version file',
       '  ansible.builtin.stat:',
-      '    path: /opt/overleaf/VERSION',
+      '    path: /opt/webapp/VERSION',
       '  register: version_stat',
       '',
       '- name: Set computed facts',
       '  ansible.builtin.set_fact:',
-      '    overleaf_ready: true',
+      '    webapp_ready: true',
       '    computed_hash: "abc123"',
       '    cacheable: true',
     ].join('\n');
     const tasksAst = parseAnsibleDocument(
-      'file:///ws/roles/overleaf/tasks/main.yml',
+      'file:///ws/roles/webapp/tasks/main.yml',
       tasksYaml,
       'tasks',
     );
@@ -111,14 +111,14 @@ describe('undefined-variable and var-naming[no-role-prefix] rules & Quick-Fixes'
     );
     expect(taskPrefixDiags).toHaveLength(2);
     expect(taskPrefixDiags.map((d) => d.quickFixes[0]?.edits[0]?.newText)).toEqual([
-      'overleaf_version_stat',
-      'overleaf_computed_hash',
+      'webapp_version_stat',
+      'webapp_computed_hash',
     ]);
   });
 
   it('supports profile and per-rule severity overrides via LintOptions', () => {
     const defaultsAst = parseAnsibleDocument(
-      'file:///ws/roles/overleaf/defaults/main.yml',
+      'file:///ws/roles/webapp/defaults/main.yml',
       ['---', 'listen_address: 0.0.0.0'].join('\n'),
       'role-defaults',
     );

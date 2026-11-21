@@ -1,0 +1,20 @@
+---
+- name: Check Webapp version file
+  # Restart webapp service comment should never be clickable
+  ansible.builtin.stat:
+    path: /opt/webapp/VERSION
+  register: webapp_version_file
+  notify:
+    - Restart webapp service
+
+- name: Show version when present
+  ansible.builtin.debug:
+    msg: Webapp version file exists
+  when: webapp_version_file.stat.exists
+
+- name: Show version with multi-line condition
+  ansible.builtin.debug:
+    msg: Webapp version file is a regular file
+  when:
+    - webapp_version_file.stat.exists
+    - not webapp_version_file.stat.isdir

@@ -4,8 +4,6 @@
 
 Ansible Lens delivers sub-20ms IntelliSense, Pylance-style hover documentation, cross-file variable precedence resolution, `register:` return-value type inference, project integrity diagnostics, and 1-click Quick-Fix linting in pure TypeScript—with **zero Python**, **zero WSL**, and **zero Docker** required at runtime.
 
-> _Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc._
-
 ---
 
 ## Key Features
@@ -13,7 +11,7 @@ Ansible Lens delivers sub-20ms IntelliSense, Pylance-style hover documentation, 
 - **Zero Python / WSL / Docker Runtime Dependencies:** Runs natively on Windows, macOS, and Linux in pure Node.js/TypeScript. Never invokes `ansible-playbook`, `ansible-lint`, or external Python subprocesses while you edit.
 - **Sub-20ms Fault-Tolerant Parsing & Linting:** Powered by a Concrete Syntax Tree (CST) YAML parser (`yaml` with `keepSourceTokens: true`) paired with a fault-tolerant Jinja2 lexical scanner (`{{ ... }}`, `{% ... %}`, `{# ... #}`, and implicit conditionals in `when:`, `changed_when:`, `failed_when:`, `until:`). Half-typed playbooks and unclosed Jinja braces never crash the Language Server.
 - **Pylance-Style Hover & `Ctrl+Click` Module Docs (Zero Permanent Underlines):** Rich Markdown hover cards and read-only `ansible-lens-docs:` virtual documentation pages on `Ctrl+Click` with module summaries, parameter tables, defaults, valid `choices`, return values, and clickable `https://docs.ansible.com/...` deep links at the top.
-- **`register:` Return-Value Type Inference (`loop:`-Aware):** Tracks `register: my_result` bindings, resolves module `RETURN` schemas plus common task fields (`failed`, `changed`, `skipped`, `rc`, `stdout`, `stdout_lines`, `stderr`, `stderr_lines`, `msg`), supports nested partial prefix completions (e.g. `overleaf_version_file.stat.e` -> `exists`) and multi-line `when:` lists, and automatically wraps schemas under `my_result.results[].<field>` when `loop:` or `with_*:` is present.
+- **`register:` Return-Value Type Inference (`loop:`-Aware):** Tracks `register: my_result` bindings, resolves module `RETURN` schemas plus common task fields (`failed`, `changed`, `skipped`, `rc`, `stdout`, `stdout_lines`, `stderr`, `stderr_lines`, `msg`), supports nested partial prefix completions (e.g. `webapp_version_file.stat.e` -> `exists`) and multi-line `when:` lists, and automatically wraps schemas under `my_result.results[].<field>` when `loop:` or `with_*:` is present.
 - **22-Level Cross-File Variable Precedence Graph & `.j2` Template Intelligence:** Indexes variables across role `defaults/main.yml`, `vars/main.yml`, `group_vars/`, `host_vars/`, inventory files, play `vars:`, relative `vars_files:` (e.g. `../../versions.yml`), `include_vars:`, block/task `vars:`, `set_fact`, and `register:`, providing full completions, 22-level precedence hover, Go-to-Definition, `undefined-variable` detection, and smart `{{ | }}` auto-spacing inside both Ansible YAML and `*.j2` templates.
 - **Nested Monorepo `ansible.cfg` Root Discovery & Project Integrity Checker:** Walks upward from each document toward the workspace root to find the nearest `ansible.cfg` (parsing `roles_path` and `inventory`) or Ansible directory layout, validating role references, `roles/<name>/tasks/main.yml`, `notify:` handler targets (with full multi-word `LocationLink` highlighting), `copy`/`template` `src:` files, and `hosts:` targets.
 - **Smart Hybrid Activation (`redhat.vscode-yaml` Coexistence):** Dynamically activates on Ansible YAML and `*.j2` files while explicitly ignoring Kubernetes manifests (`apiVersion:` + `kind:`), Docker Compose (`services:`), and GitHub Actions workflows (`on:` + `jobs:`). Injects lightweight MIT Jinja2 syntax highlighting into `source.yaml`.
@@ -180,3 +178,7 @@ node scripts/metadata-builder/dist/index.js --out-dir dist-metadata
 - Licensed under the [MIT License](./LICENSE).
 - Third-party attributions are documented in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 - Read [CONTRIBUTING.md](./CONTRIBUTING.md), [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md), and [SECURITY.md](./SECURITY.md) before opening a pull request.
+
+---
+
+<sub>_Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc._</sub>

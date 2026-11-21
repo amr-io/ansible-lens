@@ -155,7 +155,7 @@ async function verifyFlatFixture(workspaceRoot: string): Promise<void> {
 
 async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void> {
   const sitePath = path.join(workspaceRoot, 'ansible/playbooks/site.yml');
-  const roleTasksPath = path.join(workspaceRoot, 'ansible/roles/overleaf/tasks/main.yml');
+  const roleTasksPath = path.join(workspaceRoot, 'ansible/roles/webapp/tasks/main.yml');
   const ghaPath = path.join(workspaceRoot, '.github/workflows/ci.yml');
 
   const roleEditor = await openInEditor(roleTasksPath);
@@ -188,36 +188,36 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
   const renderedDocs = await vscode.workspace.openTextDocument(moduleDefs![0]!.uri);
   assert.ok(containsAnsibleDocsUrl(renderedDocs.getText()));
 
-  const regRefPos = findLineAndColumn(roleDoc, '- not overleaf_version_file.stat.isdir');
-  const regRefCol = roleDoc.lineAt(regRefPos.line).text.indexOf('overleaf_version_file') + 4;
+  const regRefPos = findLineAndColumn(roleDoc, '- not webapp_version_file.stat.isdir');
+  const regRefCol = roleDoc.lineAt(regRefPos.line).text.indexOf('webapp_version_file') + 4;
   const regDefs = await vscode.commands.executeCommand<vscode.Location[]>(
     'vscode.executeDefinitionProvider',
     roleDoc.uri,
     new vscode.Position(regRefPos.line, regRefCol),
   );
-  const registerDeclPos = findLineAndColumn(roleDoc, 'register: overleaf_version_file');
+  const registerDeclPos = findLineAndColumn(roleDoc, 'register: webapp_version_file');
   assert.equal(regDefs?.[0]?.uri.fsPath, roleDoc.uri.fsPath);
   assert.equal(regDefs?.[0]?.range.start.line, registerDeclPos.line);
 
-  // 2. Completions on `when: overleaf_version_file.`, `when:\n  - overleaf_version_file.stat.`,
-  //    and `overleaf_version_file.stat.e` with valid replacing ranges.
+  // 2. Completions on `when: webapp_version_file.`, `when:\n  - webapp_version_file.stat.`,
+  //    and `webapp_version_file.stat.e` with valid replacing ranges.
   const baseText = roleDoc.getText().trimEnd();
   for (const scenario of [
     {
       name: 'single-line trailing dot',
-      tail: ['  when: overleaf_version_file.'],
+      tail: ['  when: webapp_version_file.'],
       expected: 'stat',
       prefixLen: 0,
     },
     {
       name: 'multi-line when list trailing dot on stat.',
-      tail: ['  when:', '    - overleaf_version_file.stat.'],
+      tail: ['  when:', '    - webapp_version_file.stat.'],
       expected: 'exists',
       prefixLen: 0,
     },
     {
       name: 'nested partial prefix stat.e in multi-line when list',
-      tail: ['  when:', '    - overleaf_version_file.stat.e'],
+      tail: ['  when:', '    - webapp_version_file.stat.e'],
       expected: 'exists',
       prefixLen: 1,
     },
@@ -265,10 +265,10 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     typeof d.code === 'object' && d.code !== null ? String(d.code.value) : String(d.code ?? '');
 
   // 4. notify: LocationLink originSelectionRange (full multi-word phrase) & non-clickability of `- name:` and `# comments`.
-  const notifyItemPos = findLineAndColumn(roleDoc, '- Restart overleaf service');
+  const notifyItemPos = findLineAndColumn(roleDoc, '- Restart webapp service');
   const notifyItemText = roleDoc.lineAt(notifyItemPos.line).text;
-  const handlerPhraseStart = notifyItemText.indexOf('Restart overleaf service');
-  const handlerPhraseEnd = handlerPhraseStart + 'Restart overleaf service'.length;
+  const handlerPhraseStart = notifyItemText.indexOf('Restart webapp service');
+  const handlerPhraseEnd = handlerPhraseStart + 'Restart webapp service'.length;
   const notifyDefs = await vscode.commands.executeCommand<
     (vscode.Location | vscode.LocationLink)[]
   >(
@@ -282,7 +282,7 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
   assert.equal(notifyLink.originSelectionRange.start.character, handlerPhraseStart);
   assert.equal(notifyLink.originSelectionRange.end.character, handlerPhraseEnd);
 
-  const taskNamePos = findLineAndColumn(roleDoc, '- name: Check Overleaf version file');
+  const taskNamePos = findLineAndColumn(roleDoc, '- name: Check Webapp version file');
   const nameDefs = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
     'vscode.executeDefinitionProvider',
     roleDoc.uri,
@@ -292,7 +292,7 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
 
   const commentPos = findLineAndColumn(
     roleDoc,
-    '# Restart overleaf service comment should never be clickable',
+    '# Restart webapp service comment should never be clickable',
   );
   const commentDefs = await vscode.commands.executeCommand<
     (vscode.Location | vscode.LocationLink)[]
@@ -307,14 +307,14 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     '# comment line must never resolve to a notify handler',
   );
 
-  // 5. `undefined-variable` + Levenshtein 1-click Quick-Fix ("Did you mean 'overleaf_ufw_allowed_ports'?").
+  // 5. `undefined-variable` + Levenshtein 1-click Quick-Fix ("Did you mean 'webapp_ufw_allowed_ports'?").
   const withTypoVar = [
     baseText,
     '',
     '- name: Typo variable task',
     '  ansible.builtin.debug:',
     '    msg: "Port {{ item }}"',
-    '  loop: "{{ overleaf_ufw_allowed_por }}"',
+    '  loop: "{{ webapp_ufw_allowed_por }}"',
   ].join('\n');
   await withTemporaryContent(roleEditor, withTypoVar, async (editedDoc) => {
     const undefDiag = await waitUntil('undefined-variable diagnostic', async () => {
@@ -322,21 +322,21 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
         .getDiagnostics(editedDoc.uri)
         .find((d) => diagCode(d) === 'undefined-variable');
     });
-    assert.ok(undefDiag.message.includes("Did you mean 'overleaf_ufw_allowed_ports'?"));
+    assert.ok(undefDiag.message.includes("Did you mean 'webapp_ufw_allowed_ports'?"));
     const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
       'vscode.executeCodeActionProvider',
       editedDoc.uri,
       undefDiag.range,
     );
     assert.ok(
-      actions?.some((a) => a.title.includes("Did you mean 'overleaf_ufw_allowed_ports'?")),
+      actions?.some((a) => a.title.includes("Did you mean 'webapp_ufw_allowed_ports'?")),
       'Expected Levenshtein Quick-Fix for undefined-variable',
     );
   });
 
-  // 6. `var-naming[no-role-prefix]` in `roles/overleaf/defaults/main.yml` + 1-click Quick-Fix,
+  // 6. `var-naming[no-role-prefix]` in `roles/webapp/defaults/main.yml` + 1-click Quick-Fix,
   //    plus live settings update (`ansibleLens.lint.rules` override to `"off"`).
-  const defaultsPath = path.join(workspaceRoot, 'ansible/roles/overleaf/defaults/main.yml');
+  const defaultsPath = path.join(workspaceRoot, 'ansible/roles/webapp/defaults/main.yml');
   const defaultsEditor = await openInEditor(defaultsPath);
   const defaultsBase = defaultsEditor.document.getText().trimEnd();
   const withUnprefixedVar = `${defaultsBase}\nlisten_port: 9000\n`;
@@ -346,13 +346,13 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
         .getDiagnostics(editedDefaults.uri)
         .find((d) => diagCode(d) === 'var-naming[no-role-prefix]');
     });
-    assert.ok(prefixDiag.message.includes('overleaf_listen_port'));
+    assert.ok(prefixDiag.message.includes('webapp_listen_port'));
     const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
       'vscode.executeCodeActionProvider',
       editedDefaults.uri,
       prefixDiag.range,
     );
-    assert.ok(actions?.some((a) => a.title.includes("Rename to 'overleaf_listen_port'")));
+    assert.ok(actions?.some((a) => a.title.includes("Rename to 'webapp_listen_port'")));
 
     // Live settings update: disable `var-naming[no-role-prefix]` via workspace configuration
     const cfg = vscode.workspace.getConfiguration('ansibleLens');
@@ -373,9 +373,9 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     }
   });
 
-  // 7. `.j2` template completions inheriting `../../versions.yml` (`overleaf_release_tag`) and role defaults,
+  // 7. `.j2` template completions inheriting `../../versions.yml` (`webapp_release_tag`) and role defaults,
   //    plus Smart `{{ | }}` Auto-Space on Space and Backspace.
-  const templatePath = path.join(workspaceRoot, 'ansible/roles/overleaf/templates/overleaf.rc.j2');
+  const templatePath = path.join(workspaceRoot, 'ansible/roles/webapp/templates/webapp.rc.j2');
   const templateEditor = await openInEditor(templatePath);
   const templateBase = templateEditor.document.getText().trimEnd();
   const templateProbe = `${templateBase}\nTAG="{{ `;
@@ -389,10 +389,10 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     );
     const labels = labelsOf(list);
     assert.ok(
-      labels.includes('overleaf_release_tag'),
-      `Expected 'overleaf_release_tag' from ../../versions.yml in .j2 completions: [${labels.join(', ')}]`,
+      labels.includes('webapp_release_tag'),
+      `Expected 'webapp_release_tag' from ../../versions.yml in .j2 completions: [${labels.join(', ')}]`,
     );
-    assert.ok(labels.includes('overleaf_http_port'));
+    assert.ok(labels.includes('webapp_http_port'));
   });
 
   // Smart `{{ | }}` Auto-Space in `.j2` template: insert `' '` inside `{{}}` -> expands to `{{  }}` with cursor centered.

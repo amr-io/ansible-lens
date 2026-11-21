@@ -1,9 +1,9 @@
 ---
-- name: Configure Overleaf servers
-  hosts: overleaf_servers
+- name: Configure Webapp servers
+  hosts: webapp_servers
   become: true
   vars_files:
     - ../../versions.yml
   roles:
     - common
-    - overleaf
+    - webapp

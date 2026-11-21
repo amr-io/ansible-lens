@@ -1,7 +1,7 @@
 {
   "name": "ansible-lens",
   "displayName": "Ansible Lens",
-  "description": "Zero-dependency, cross-platform, static-metadata Ansible Language Server & Linter. Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc.",
+  "description": "Fast, zero-dependency Ansible IntelliSense, tooltips, and linting — no Python or WSL required.",
   "version": "0.1.1",
   "publisher": "amr-vibe",
   "license": "MIT",

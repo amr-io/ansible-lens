@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`notify:` Go-to-Definition Leak & Multi-Word Highlight (`@ansible-lens/server`):**
   - Stopped matching `- name:` lines or falling back to `notifyNames[0]`; handler definitions now resolve strictly when the cursor is inside a `notify:` handler value (excluding `notify:` key, `- name:`, and `# comments`) and return LSP `LocationLink[]` with `originSelectionRange` spanning the entire multi-word handler name.
 - **Completions After `.` & Multi-Line `when:` Lists (`@ansible-lens/server`):**
-  - Attached explicit `textEdit` replacement ranges after `.`, fixed nested partial prefix completion (`overleaf_version_file.stat.e`), and walked upward through multi-line `when:` / `changed_when:` / `failed_when:` YAML sequence items.
+  - Attached explicit `textEdit` replacement ranges after `.`, fixed nested partial prefix completion (`webapp_version_file.stat.e`), and walked upward through multi-line `when:` / `changed_when:` / `failed_when:` YAML sequence items.
 
 ## [0.1.0] - 2026-11-20
 
