@@ -6,7 +6,11 @@ export {
   MODULE_DOCS_SCHEME,
   buildModuleDocsUri,
 } from './language-service.js';
-export type { InventoryInfo, LanguageServiceOptions } from './language-service.js';
+export type {
+  InventoryInfo,
+  LanguageServiceOptions,
+  LintConfiguration,
+} from './language-service.js';
 export { bindLanguageServer, startLanguageServer } from './server.js';
 export type { BoundServer } from './server.js';
 export { evaluateAnsibleHeuristic, parseDocumentWithFallback } from './ast-fallback.js';

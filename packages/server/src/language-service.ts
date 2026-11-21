@@ -5,6 +5,8 @@ import type {
   InferredRegisteredVariable,
   InferredReturnField,
   LintDiagnostic,
+  LintOptions,
+  LintSeverity,
   MetadataRegistry,
   SourcePosition,
   SourceRange,
@@ -12,6 +14,7 @@ import type {
 } from '@ansible-lens/core';
 import {
   WorkspaceVariableGraph,
+  applyLintConfiguration,
   checkProjectIntegrity,
   createDefaultMetadataRegistry,
   discoverAnsibleProjectContext,
@@ -69,12 +72,20 @@ export interface InventoryInfo {
   readonly groups: readonly string[];
 }
 
+export interface LintConfiguration {
+  readonly enabled?: boolean;
+  readonly profile?: 'minimal' | 'basic' | 'moderate' | 'production';
+  readonly rules?: Readonly<Record<string, LintSeverity | 'off'>>;
+  readonly extraVars?: readonly string[];
+}
+
 export interface LanguageServiceOptions {
   readonly registry?: MetadataRegistry;
   readonly fs?: IWorkspaceFs;
   readonly logger?: ServerLogger;
   readonly workspaceRoots?: readonly string[];
   readonly documentLinksEnabled?: boolean;
+  readonly lintConfig?: LintConfiguration;
 }
 
 interface IndexedDocumentEntry {
@@ -98,6 +109,10 @@ export class AnsibleLanguageService {
   private readonly workspaceRoots: string[] = [];
   private variableGraph = new WorkspaceVariableGraph();
   private documentLinksEnabled: boolean;
+  private lintEnabled = true;
+  private lintProfile: 'minimal' | 'basic' | 'moderate' | 'production' = 'moderate';
+  private lintRuleOverrides: Readonly<Record<string, LintSeverity | 'off'>> = {};
+  private lintExtraVars: readonly string[] = [];
 
   public constructor(options?: LanguageServiceOptions) {
     this.registry = options?.registry ?? createDefaultMetadataRegistry();
@@ -105,11 +120,43 @@ export class AnsibleLanguageService {
     this.fs = options?.fs ?? new NodeWorkspaceFs();
     this.logger = options?.logger ?? createServerLogger('AnsibleLanguageService');
     this.documentLinksEnabled = options?.documentLinksEnabled ?? false;
+    if (options?.lintConfig) {
+      this.setLintConfiguration(options.lintConfig);
+    }
     if (options?.workspaceRoots) {
       for (const root of options.workspaceRoots) {
         this.addWorkspaceRoot(root);
       }
     }
+  }
+
+  public setLintConfiguration(config: LintConfiguration): void {
+    if (typeof config.enabled === 'boolean') {
+      this.lintEnabled = config.enabled;
+    }
+    if (
+      config.profile === 'minimal' ||
+      config.profile === 'basic' ||
+      config.profile === 'moderate' ||
+      config.profile === 'production'
+    ) {
+      this.lintProfile = config.profile;
+    }
+    if (config.rules !== undefined) {
+      this.lintRuleOverrides = config.rules;
+    }
+    if (Array.isArray(config.extraVars)) {
+      this.lintExtraVars = config.extraVars.filter((v): v is string => typeof v === 'string');
+    }
+  }
+
+  public getLintConfiguration(): Required<LintConfiguration> {
+    return {
+      enabled: this.lintEnabled,
+      profile: this.lintProfile,
+      rules: this.lintRuleOverrides,
+      extraVars: this.lintExtraVars,
+    };
   }
 
   public setDocumentLinksEnabled(enabled: boolean): void {
@@ -206,7 +253,23 @@ export class AnsibleLanguageService {
     return false;
   }
 
+  private buildLintOptions(): LintOptions {
+    const knownVariables = new Set<string>();
+    for (const resolved of this.variableGraph.listVariables()) {
+      knownVariables.add(resolved.name);
+    }
+    return {
+      knownVariables,
+      extraVars: this.lintExtraVars,
+      profile: this.lintProfile,
+      ruleOverrides: this.lintRuleOverrides,
+    };
+  }
+
   public getDiagnostics(uri: string, text?: string): Diagnostic[] {
+    if (!this.lintEnabled) {
+      return [];
+    }
     const docText = text ?? this.documents.get(uri)?.text;
     if (docText === undefined) {
       return [];
@@ -218,11 +281,13 @@ export class AnsibleLanguageService {
     }
 
     const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
-    const coreDiags = lintAnsibleDocument(ast, this.registry);
+    const lintOptions = this.buildLintOptions();
+    const coreDiags = lintAnsibleDocument(ast, this.registry, lintOptions);
     const lintDiags = coreDiags.length > 0 ? coreDiags : fallbackLintDocument(ast, this.registry);
 
     const root = this.findWorkspaceRootForUri(uri);
-    const integrityDiags = root ? checkProjectIntegrity(ast, root, this.fs) : [];
+    const rawIntegrityDiags = root ? checkProjectIntegrity(ast, root, this.fs) : [];
+    const integrityDiags = applyLintConfiguration(rawIntegrityDiags, lintOptions);
 
     const combined = deduplicateDiagnostics([...lintDiags, ...integrityDiags]);
     return combined.map((d) => toLspDiagnostic(d));
@@ -771,6 +836,9 @@ export class AnsibleLanguageService {
   }
 
   public getCodeActions(uri: string, range: Range, text?: string): CodeAction[] {
+    if (!this.lintEnabled) {
+      return [];
+    }
     const docText = text ?? this.documents.get(uri)?.text;
     if (docText === undefined) {
       return [];
@@ -782,7 +850,8 @@ export class AnsibleLanguageService {
     }
 
     const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
-    const coreDiags = lintAnsibleDocument(ast, this.registry);
+    const lintOptions = this.buildLintOptions();
+    const coreDiags = lintAnsibleDocument(ast, this.registry, lintOptions);
     const lintDiags = coreDiags.length > 0 ? coreDiags : fallbackLintDocument(ast, this.registry);
 
     const actions: CodeAction[] = [];
