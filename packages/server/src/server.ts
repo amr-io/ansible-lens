@@ -155,7 +155,7 @@ export function bindLanguageServer(
   );
 
   const pendingChangeTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const pendingWatchedChanges = new Map<string, number>();
+  const pendingWatchedChanges = new Map<string, { uri: string; type: number }>();
   const lastOpenedVersion = new Map<string, number>();
   let watchedFilesTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -312,6 +312,9 @@ export function bindLanguageServer(
   });
 
   documents.onDidChangeContent((change) => {
+    if (disposed) {
+      return;
+    }
     const uri = change.document.uri;
     if (lastOpenedVersion.get(uri) === change.document.version) {
       lastOpenedVersion.delete(uri);
@@ -362,9 +365,15 @@ export function bindLanguageServer(
   });
 
   connection.onDidChangeWatchedFiles((params) => {
+    if (disposed) {
+      return;
+    }
     for (const change of params.changes) {
       // FileChangeType: 1 = Created, 2 = Changed, 3 = Deleted
-      pendingWatchedChanges.set(change.uri, change.type);
+      pendingWatchedChanges.set(normalizeDocumentUri(change.uri), {
+        uri: change.uri,
+        type: change.type,
+      });
     }
     if (watchedFilesTimer !== undefined) {
       clearTimeout(watchedFilesTimer);
@@ -378,15 +387,17 @@ export function bindLanguageServer(
       const deletedUris: string[] = [];
       const batchedCanonicalUris = new Set<string>();
 
-      for (const [uri, changeType] of pendingWatchedChanges.entries()) {
-        batchedCanonicalUris.add(normalizeDocumentUri(uri));
-        if (changeType === 3) {
-          deletedUris.push(uri);
-          batch.push({ uri, deleted: true });
+      for (const [canonicalUri, entry] of pendingWatchedChanges.entries()) {
+        batchedCanonicalUris.add(canonicalUri);
+        if (entry.type === 3) {
+          deletedUris.push(entry.uri);
+          batch.push({ uri: entry.uri, deleted: true });
         } else {
-          const openDoc = documents.get(uri);
+          const openDoc =
+            documents.get(entry.uri) ??
+            documents.all().find((d) => normalizeDocumentUri(d.uri) === canonicalUri);
           batch.push({
-            uri,
+            uri: entry.uri,
             deleted: false,
             ...(openDoc ? { openDocumentText: openDoc.getText() } : {}),
           });

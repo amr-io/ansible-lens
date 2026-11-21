@@ -219,6 +219,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     middleware: {
       provideDefinition: async (document, position, token, next) => {
         const result = await next(document, position, token);
+        if (token.isCancellationRequested) {
+          return undefined;
+        }
         const behavior = vscode.workspace
           .getConfiguration('ansibleLens')
           .get<DocsCtrlClickBehavior>('docs.ctrlClickBehavior', 'renderedPreview');

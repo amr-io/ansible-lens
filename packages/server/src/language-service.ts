@@ -628,22 +628,18 @@ export class AnsibleLanguageService {
       };
     }
 
-    const hasAnsibleCfgChange = updatedUris.some(
-      (canonicalUri) =>
-        path.posix.basename(uriToFsPath(canonicalUri).replaceAll('\\', '/').toLowerCase()) ===
-        'ansible.cfg',
-    );
-    if (hasAnsibleCfgChange) {
-      this.indexWorkspace();
-      return {
-        needsFullWorkspaceReindex: true,
-        affectsSharedProviders: true,
-        updatedUris,
-      };
-    }
+    const isAnsibleCfg = (canonicalUri: string): boolean =>
+      path.posix.basename(uriToFsPath(canonicalUri).replaceAll('\\', '/').toLowerCase()) ===
+      'ansible.cfg';
 
-    let affectsSharedProviders = false;
+    const hasAnsibleCfgChange = updatedUris.some(isAnsibleCfg);
+
+    let affectsSharedProviders = hasAnsibleCfgChange;
     for (const [canonicalUri, change] of deduped.entries()) {
+      if (isAnsibleCfg(canonicalUri)) {
+        continue;
+      }
+
       if (this.isSharedProviderDocument(canonicalUri, change.openDocumentText)) {
         affectsSharedProviders = true;
       }
@@ -681,7 +677,24 @@ export class AnsibleLanguageService {
       }
     }
 
+    if (hasAnsibleCfgChange) {
+      this.indexWorkspace();
+      return {
+        needsFullWorkspaceReindex: true,
+        affectsSharedProviders: true,
+        updatedUris,
+      };
+    }
+
     this.indexReferencedVarsFiles();
+    if (
+      !affectsSharedProviders &&
+      updatedUris.some(
+        (u) => this.referencedVarsFileUris.has(u) || this.externalVarsFileUris.has(u),
+      )
+    ) {
+      affectsSharedProviders = true;
+    }
     this.rebuildVariableGraph();
 
     return {
