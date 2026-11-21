@@ -210,4 +210,81 @@ describe('checkProjectIntegrity', () => {
     expect(diagnostics.some((d) => d.ruleId === 'missing-handler')).toBe(true);
     expect(diagnostics.some((d) => d.ruleId === 'missing-src-file')).toBe(true);
   });
+
+  it('discovers nested monorepo Ansible root (mcleaf/ansible/ opened from mcleaf/) and honors ansible.cfg roles_path & inventory', () => {
+    const fs = createMemoryFs(
+      {
+        '/mcleaf/ansible/ansible.cfg': [
+          '[defaults]',
+          'roles_path = ./custom_roles:../shared_roles',
+          'inventory = ./inventories/prod/hosts.ini',
+        ].join('\n'),
+        '/mcleaf/ansible/inventories/prod/hosts.ini': '[mcleaf_app]\napp1.internal\n',
+        '/mcleaf/ansible/custom_roles/nginx_edge/tasks/main.yml':
+          '- name: edge task\n  ansible.builtin.debug:\n    msg: ok\n',
+        '/mcleaf/ansible/custom_roles/nginx_edge/handlers/main.yml':
+          '- name: Reload edge\n  ansible.builtin.debug:\n    msg: reload\n',
+        '/mcleaf/shared_roles/base_security/tasks/main.yml':
+          '- name: sec task\n  ansible.builtin.debug:\n    msg: sec\n',
+        '/mcleaf/ansible/files/banner.txt': 'Welcome to McLeaf',
+        '/mcleaf/ansible/templates/edge.conf.j2': 'server {}',
+      },
+      ['/mcleaf/ansible/custom_roles/nginx_edge', '/mcleaf/shared_roles/base_security'],
+    );
+
+    const ast = makeAst('file:///mcleaf/ansible/playbooks/site.yml', 'playbook', {
+      plays: [
+        makePlay({
+          hosts: 'mcleaf_app',
+          roles: [
+            { name: 'nginx_edge', range: makeRange(3, 6, 40) },
+            { name: 'base_security', range: makeRange(4, 6, 65) },
+          ],
+          tasks: [
+            makeTask('ansible.builtin.copy', {
+              params: [makeParam('src', 'banner.txt'), makeParam('dest', '/etc/banner.txt')],
+              notify: ['Reload edge'],
+              range: makeRange(7, 4, 100),
+            }),
+            makeTask('ansible.builtin.template', {
+              params: [makeParam('src', 'edge.conf.j2'), makeParam('dest', '/etc/edge.conf')],
+              range: makeRange(11, 4, 150),
+            }),
+          ],
+        }),
+      ],
+    });
+
+    // Opened from outer monorepo root `/mcleaf`
+    const diagnostics = checkProjectIntegrity(ast, '/mcleaf', fs);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('discovers nested monorepo Ansible root via roles/ and group_vars/ markers even without ansible.cfg and emits only 1 missing-role diagnostic when missing', () => {
+    const fs = createMemoryFs(
+      {
+        '/mcleaf/ansible/group_vars/all.yml': 'env: prod\n',
+        '/mcleaf/ansible/roles/present_role/tasks/main.yml':
+          '- name: ok\n  ansible.builtin.debug:\n    msg: ok\n',
+      },
+      ['/mcleaf/ansible/roles/present_role', '/mcleaf/ansible/group_vars'],
+    );
+
+    const ast = makeAst('file:///mcleaf/ansible/site.yml', 'playbook', {
+      plays: [
+        makePlay({
+          hosts: 'all',
+          roles: [
+            { name: 'present_role', range: makeRange(3, 6, 30) },
+            { name: 'truly_missing_role', range: makeRange(4, 6, 60) },
+          ],
+        }),
+      ],
+    });
+
+    const diagnostics = checkProjectIntegrity(ast, '/mcleaf', fs);
+    const missingRoleDiags = diagnostics.filter((d) => d.ruleId === 'missing-role');
+    expect(missingRoleDiags).toHaveLength(1);
+    expect(missingRoleDiags[0]?.message).toContain('truly_missing_role');
+  });
 });

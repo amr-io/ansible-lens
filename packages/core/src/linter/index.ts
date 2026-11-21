@@ -667,10 +667,41 @@ function resolveCanonicalFqcn(
   return DEFAULT_FQCN_MAP[moduleName];
 }
 
+function isLowerIdentifierSegment(seg: string): boolean {
+  if (seg.length === 0) {
+    return false;
+  }
+  const first = seg.charCodeAt(0);
+  if (!((first >= 97 && first <= 122) || first === 95)) {
+    return false;
+  }
+  for (let i = 1; i < seg.length; i++) {
+    const c = seg.charCodeAt(i);
+    if (!((c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function parseValidFqcnCollection(moduleName: string): string | undefined {
+  const parts = moduleName.split('.');
+  if (parts.length < 3) {
+    return undefined;
+  }
+  for (const part of parts) {
+    if (!isLowerIdentifierSegment(part)) {
+      return undefined;
+    }
+  }
+  return `${parts[0]}.${parts[1]}`;
+}
+
 function lintTask(
   task: TaskNode,
   registry: IMetadataRegistry,
   knownModuleNames: readonly string[],
+  loadedCollections: ReadonlySet<string>,
   diagnostics: LintDiagnostic[],
 ): void {
   // 1. name-missing
@@ -705,25 +736,41 @@ function lintTask(
   const moduleSpec = registry.getModule(task.moduleName);
 
   if (!moduleSpec && knownModuleNames.length > 0) {
-    const closest = findClosestMatch(task.moduleName, knownModuleNames);
-    const quickFixes: QuickFixAction[] = closest
-      ? [
-          {
-            title: `Replace with '${closest}'`,
-            ruleId: 'unknown-module',
-            isPreferred: true,
-            edits: [{ range: task.moduleRange, newText: closest }],
-          },
-        ]
-      : [];
-    const hint = closest ? ` Did you mean '${closest}'?` : '';
-    diagnostics.push({
-      ruleId: 'unknown-module',
-      message: `Unknown Ansible module '${task.moduleName}'.${hint}`,
-      severity: 'error',
-      range: task.moduleRange,
-      quickFixes,
-    });
+    const fqcnCollection = parseValidFqcnCollection(task.moduleName);
+    if (
+      fqcnCollection !== undefined &&
+      !loadedCollections.has(fqcnCollection) &&
+      fqcnCollection !== 'ansible.builtin' &&
+      fqcnCollection !== 'ansible.legacy'
+    ) {
+      diagnostics.push({
+        ruleId: 'unknown-module',
+        message: `Collection metadata not loaded for '${fqcnCollection}' (module '${task.moduleName}').`,
+        severity: 'info',
+        range: task.moduleRange,
+        quickFixes: [],
+      });
+    } else {
+      const closest = findClosestMatch(task.moduleName, knownModuleNames);
+      const quickFixes: QuickFixAction[] = closest
+        ? [
+            {
+              title: `Replace with '${closest}'`,
+              ruleId: 'unknown-module',
+              isPreferred: true,
+              edits: [{ range: task.moduleRange, newText: closest }],
+            },
+          ]
+        : [];
+      const hint = closest ? ` Did you mean '${closest}'?` : '';
+      diagnostics.push({
+        ruleId: 'unknown-module',
+        message: `Unknown Ansible module '${task.moduleName}'.${hint}`,
+        severity: 'error',
+        range: task.moduleRange,
+        quickFixes,
+      });
+    }
   }
 
   if (moduleSpec?.deprecated) {
@@ -933,8 +980,9 @@ export function lintAnsibleDocument(
     }
   }
 
+  const loadedCollections = new Set(registry.listCollections());
   for (const task of tasks) {
-    lintTask(task, registry, knownModuleNames, diagnostics);
+    lintTask(task, registry, knownModuleNames, loadedCollections, diagnostics);
   }
 
   return diagnostics;

@@ -65,6 +65,12 @@ export function bindLanguageServer(
       engine.addWorkspaceRoot(params.rootPath);
     }
 
+    const initOpts = params.initializationOptions as
+      { readonly documentLinksEnabled?: boolean } | undefined;
+    if (typeof initOpts?.documentLinksEnabled === 'boolean') {
+      engine.setDocumentLinksEnabled(initOpts.documentLinksEnabled);
+    }
+
     engine.indexWorkspace();
 
     return {
@@ -134,6 +140,14 @@ export function bindLanguageServer(
     collectionsCount: engine.getLoadedCollectionsCount(),
     modulesCount: engine.getRegistry().listModules().length,
   }));
+
+  connection.onRequest(
+    'ansibleLens/setDocumentLinksEnabled',
+    (params?: { readonly enabled?: boolean }) => {
+      engine.setDocumentLinksEnabled(Boolean(params?.enabled));
+      return { documentLinksEnabled: engine.isDocumentLinksEnabled() };
+    },
+  );
 
   connection.onRequest('ansibleLens/refreshMetadata', () => {
     engine.indexWorkspace();

@@ -8,6 +8,27 @@ import type {
 } from '../contracts/types.js';
 import { findClosestMatch } from './similarity.js';
 
+/**
+ * Discovered Ansible project root and configuration for a document inside a workspace
+ * (including nested monorepos such as `mcleaf/ansible/` opened from `mcleaf/`).
+ */
+export interface AnsibleProjectContext {
+  readonly ansibleRoot: string;
+  readonly workspaceRoot: string;
+  readonly documentDir: string;
+  readonly ansibleCfgPath?: string;
+  readonly rolesPaths: readonly string[];
+  readonly inventoryPaths: readonly string[];
+}
+
+/**
+ * Parsed `[defaults]` settings from an `ansible.cfg` file.
+ */
+export interface ParsedAnsibleCfg {
+  readonly rolesPaths: readonly string[];
+  readonly inventoryPath?: string;
+}
+
 function normalizeSlash(input: string): string {
   return input.replaceAll('\\', '/');
 }
@@ -32,6 +53,34 @@ function trimBothSlashes(input: string): string {
   return input.slice(start, end);
 }
 
+function resolvePosixSegments(fullPath: string): string {
+  const isAbs = fullPath.startsWith('/');
+  const drivePrefix =
+    !isAbs && fullPath.length >= 2 && fullPath[1] === ':' ? fullPath.slice(0, 2) : '';
+  const pathBody = drivePrefix.length > 0 ? fullPath.slice(2) : fullPath;
+  const rawParts = pathBody.split('/');
+  const stack: string[] = [];
+  for (const part of rawParts) {
+    if (part.length === 0 || part === '.') {
+      continue;
+    }
+    if (part === '..') {
+      if (stack.length > 0 && stack[stack.length - 1] !== '..') {
+        stack.pop();
+      } else if (!isAbs && drivePrefix.length === 0) {
+        stack.push('..');
+      }
+      continue;
+    }
+    stack.push(part);
+  }
+  const joined = stack.join('/');
+  if (drivePrefix.length > 0) {
+    return joined.length > 0 ? `${drivePrefix}/${joined}` : drivePrefix;
+  }
+  return isAbs ? `/${joined}` : joined;
+}
+
 function joinFsPath(...parts: string[]): string {
   const cleaned: string[] = [];
   for (let i = 0; i < parts.length; i++) {
@@ -45,7 +94,7 @@ function joinFsPath(...parts: string[]): string {
       cleaned.push(trimBothSlashes(part));
     }
   }
-  return cleaned.join('/');
+  return resolvePosixSegments(cleaned.join('/'));
 }
 
 function uriToFsPath(uri: string): string {
@@ -65,7 +114,284 @@ function uriToFsPath(uri: string): string {
 function dirnamePath(filePath: string): string {
   const normalized = normalizeSlash(filePath);
   const idx = normalized.lastIndexOf('/');
-  return idx <= 0 ? normalized : normalized.slice(0, idx);
+  if (idx < 0) {
+    return normalized;
+  }
+  if (idx === 0) {
+    return '/';
+  }
+  return normalized.slice(0, idx);
+}
+
+function stripInlineIniComment(value: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+    } else if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+    } else if ((ch === '#' || ch === ';') && !inSingle && !inDouble) {
+      if (i === 0 || value[i - 1] === ' ' || value[i - 1] === '\t') {
+        return value.slice(0, i).trim();
+      }
+    }
+  }
+  return value.trim();
+}
+
+function unquoteIniValue(raw: string): string {
+  const trimmed = stripInlineIniComment(raw);
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+/**
+ * Parses `roles_path` (or `roles_dir`) and `inventory` (or `hostfile`) from `ansible.cfg`.
+ */
+export function parseAnsibleCfg(content: string): ParsedAnsibleCfg {
+  const lines = content.replaceAll('\r\n', '\n').split('\n');
+  let currentSection = 'defaults';
+  const rolesPaths: string[] = [];
+  let inventoryPath: string | undefined;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith('#') || line.startsWith(';')) {
+      continue;
+    }
+    if (line.startsWith('[') && line.endsWith(']') && line.length > 2) {
+      currentSection = line.slice(1, -1).trim().toLowerCase();
+      continue;
+    }
+    if (currentSection !== 'defaults') {
+      continue;
+    }
+    const eqIdx = line.indexOf('=');
+    if (eqIdx <= 0) {
+      continue;
+    }
+    const key = line.slice(0, eqIdx).trim().toLowerCase();
+    const rawVal = unquoteIniValue(line.slice(eqIdx + 1));
+    if (rawVal.length === 0) {
+      continue;
+    }
+    if (key === 'roles_path' || key === 'roles_dir') {
+      const separator = rawVal.includes(':') ? ':' : ',';
+      for (const item of rawVal.split(separator)) {
+        const cleaned = item.trim();
+        if (cleaned.length > 0) {
+          rolesPaths.push(cleaned);
+        }
+      }
+    } else if (key === 'inventory' || key === 'hostfile') {
+      inventoryPath = rawVal;
+    }
+  }
+
+  return {
+    rolesPaths,
+    ...(inventoryPath !== undefined ? { inventoryPath } : {}),
+  };
+}
+
+function buildAncestorChain(startDir: string, stopDir: string): readonly string[] {
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let current = trimTrailingSlashes(normalizeSlash(startDir)) || '/';
+  const normalizedStop = trimTrailingSlashes(normalizeSlash(stopDir)) || '/';
+
+  for (let depth = 0; depth < 16; depth++) {
+    if (!seen.has(current)) {
+      seen.add(current);
+      chain.push(current);
+    }
+    if (current === normalizedStop) {
+      break;
+    }
+    const parent = dirnamePath(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  if (!seen.has(normalizedStop)) {
+    chain.push(normalizedStop);
+  }
+  return chain;
+}
+
+function directoryHasAnsibleLayoutMarkers(dir: string, fs: IWorkspaceFs): boolean {
+  // Check roles/, inventory/, inventories/, group_vars/, host_vars/
+  const markerCheckPaths = [
+    joinFsPath(dir, 'roles'),
+    joinFsPath(dir, 'inventory'),
+    joinFsPath(dir, 'inventories'),
+    joinFsPath(dir, 'group_vars'),
+    joinFsPath(dir, 'group_vars/all'),
+    joinFsPath(dir, 'group_vars/all.yml'),
+    joinFsPath(dir, 'group_vars/all.yaml'),
+    joinFsPath(dir, 'host_vars'),
+    joinFsPath(dir, 'inventory/hosts'),
+    joinFsPath(dir, 'inventory/hosts.ini'),
+    joinFsPath(dir, 'inventory/hosts.yml'),
+    joinFsPath(dir, 'inventory/hosts.yaml'),
+    joinFsPath(dir, 'inventory/inventory.ini'),
+    joinFsPath(dir, 'inventory/inventory.yml'),
+    joinFsPath(dir, 'inventory/inventory.yaml'),
+    joinFsPath(dir, 'hosts.ini'),
+    joinFsPath(dir, 'inventory.ini'),
+    joinFsPath(dir, 'inventory.yml'),
+    joinFsPath(dir, 'inventory.yaml'),
+  ];
+
+  for (const candidate of markerCheckPaths) {
+    if (fs.exists(candidate)) {
+      return true;
+    }
+  }
+
+  if (
+    fs.listFiles(joinFsPath(dir, 'roles')).length > 0 ||
+    fs.listFiles(joinFsPath(dir, 'inventory')).length > 0 ||
+    fs.listFiles(joinFsPath(dir, 'group_vars')).length > 0 ||
+    fs.listFiles(joinFsPath(dir, 'host_vars')).length > 0
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function resolveRelativeToBase(baseDir: string, targetPath: string): string {
+  const normalizedTarget = normalizeSlash(targetPath);
+  if (
+    normalizedTarget.startsWith('/') ||
+    (normalizedTarget.length >= 2 && normalizedTarget[1] === ':')
+  ) {
+    return resolvePosixSegments(normalizedTarget);
+  }
+  return joinFsPath(baseDir, normalizedTarget);
+}
+
+/**
+ * Walks up from `documentDir` toward `workspaceRoot` to locate the nearest `ansible.cfg`
+ * (parsing `roles_path` and `inventory` if configured) or the nearest parent directory
+ * containing `roles/`, `inventory/`, or `group_vars/`.
+ */
+export function discoverAnsibleProjectContext(
+  docPathOrUri: string,
+  workspaceRoot: string,
+  fs: IWorkspaceFs,
+): AnsibleProjectContext {
+  const normalizedWorkspaceRoot = trimTrailingSlashes(normalizeSlash(workspaceRoot)) || '/';
+  const docPath = uriToFsPath(docPathOrUri);
+  const documentDir = docPath.includes('/') ? dirnamePath(docPath) : normalizedWorkspaceRoot;
+  const ancestors = buildAncestorChain(documentDir, normalizedWorkspaceRoot);
+
+  let ansibleRoot: string | undefined;
+  let ansibleCfgPath: string | undefined;
+
+  // 1. Nearest ancestor with ansible.cfg
+  for (const dir of ancestors) {
+    const cfgCandidate = joinFsPath(dir, 'ansible.cfg');
+    if (fs.exists(cfgCandidate)) {
+      ansibleRoot = dir;
+      ansibleCfgPath = cfgCandidate;
+      break;
+    }
+  }
+
+  // 2. Nearest ancestor containing roles/, inventory/, or group_vars/
+  if (ansibleRoot === undefined) {
+    for (const dir of ancestors) {
+      if (directoryHasAnsibleLayoutMarkers(dir, fs)) {
+        ansibleRoot = dir;
+        break;
+      }
+    }
+  }
+
+  // 3. Fallback to workspaceRoot
+  const effectiveAnsibleRoot = ansibleRoot ?? normalizedWorkspaceRoot;
+
+  let parsedCfg: ParsedAnsibleCfg = { rolesPaths: [] };
+  if (ansibleCfgPath !== undefined) {
+    const cfgContent = fs.readFile(ansibleCfgPath);
+    if (cfgContent !== undefined) {
+      parsedCfg = parseAnsibleCfg(cfgContent);
+    }
+  }
+
+  const rolesPathsSet = new Set<string>();
+  for (const configuredRolePath of parsedCfg.rolesPaths) {
+    rolesPathsSet.add(resolveRelativeToBase(effectiveAnsibleRoot, configuredRolePath));
+  }
+  rolesPathsSet.add(joinFsPath(documentDir, 'roles'));
+  rolesPathsSet.add(joinFsPath(effectiveAnsibleRoot, 'roles'));
+  if (dirnamePath(documentDir) !== documentDir) {
+    rolesPathsSet.add(joinFsPath(dirnamePath(documentDir), 'roles'));
+  }
+  rolesPathsSet.add(joinFsPath(normalizedWorkspaceRoot, 'roles'));
+  rolesPathsSet.add(effectiveAnsibleRoot);
+  rolesPathsSet.add(normalizedWorkspaceRoot);
+
+  const inventoryPathsSet = new Set<string>();
+  if (parsedCfg.inventoryPath !== undefined) {
+    const resolvedInv = resolveRelativeToBase(effectiveAnsibleRoot, parsedCfg.inventoryPath);
+    inventoryPathsSet.add(resolvedInv);
+    inventoryPathsSet.add(joinFsPath(resolvedInv, 'hosts'));
+    inventoryPathsSet.add(joinFsPath(resolvedInv, 'hosts.ini'));
+    inventoryPathsSet.add(joinFsPath(resolvedInv, 'inventory.ini'));
+    inventoryPathsSet.add(joinFsPath(resolvedInv, 'hosts.yml'));
+    inventoryPathsSet.add(joinFsPath(resolvedInv, 'hosts.yaml'));
+    inventoryPathsSet.add(joinFsPath(resolvedInv, 'inventory.yml'));
+    inventoryPathsSet.add(joinFsPath(resolvedInv, 'inventory.yaml'));
+    for (const listed of fs.listFiles(resolvedInv)) {
+      inventoryPathsSet.add(normalizeSlash(listed));
+    }
+  }
+
+  const standardInvNames = [
+    'inventory',
+    'hosts',
+    'hosts.ini',
+    'inventory.ini',
+    'inventory.yml',
+    'inventory.yaml',
+    'inventory/hosts',
+    'inventory/hosts.ini',
+    'inventory/inventory.ini',
+    'inventory/hosts.yml',
+    'inventory/hosts.yaml',
+    'inventory/inventory.yml',
+    'inventory/inventory.yaml',
+    'inventories/hosts',
+    'inventories/hosts.ini',
+  ];
+
+  for (const baseDir of [effectiveAnsibleRoot, documentDir, normalizedWorkspaceRoot]) {
+    for (const relName of standardInvNames) {
+      inventoryPathsSet.add(joinFsPath(baseDir, relName));
+    }
+  }
+
+  return {
+    ansibleRoot: effectiveAnsibleRoot,
+    workspaceRoot: normalizedWorkspaceRoot,
+    documentDir,
+    ...(ansibleCfgPath !== undefined ? { ansibleCfgPath } : {}),
+    rolesPaths: Array.from(rolesPathsSet),
+    inventoryPaths: Array.from(inventoryPathsSet),
+  };
 }
 
 function containsJinja(value: string): boolean {
@@ -97,16 +423,13 @@ function isValidRoleName(roleName: string): boolean {
 
 function resolveRoleDir(
   roleName: string,
-  workspaceRoot: string,
-  playbookDir: string,
+  context: AnsibleProjectContext,
   fs: IWorkspaceFs,
 ): string | undefined {
-  const normalizedRoot = normalizeSlash(workspaceRoot);
-  const candidates = [
-    joinFsPath(playbookDir, 'roles', roleName),
-    joinFsPath(normalizedRoot, 'roles', roleName),
-    joinFsPath(normalizedRoot, roleName),
-  ];
+  const candidates = new Set<string>();
+  for (const roleBase of context.rolesPaths) {
+    candidates.add(joinFsPath(roleBase, roleName));
+  }
 
   for (const dir of candidates) {
     if (
@@ -194,8 +517,7 @@ function collectTaskHandlerTargets(task: TaskNode, knownHandlers: Set<string>): 
 function collectWorkspaceHandlers(
   ast: AnsibleDocumentAst,
   play: PlayNode | undefined,
-  workspaceRoot: string,
-  playbookDir: string,
+  context: AnsibleProjectContext,
   fs: IWorkspaceFs,
 ): Set<string> {
   const known = new Set<string>();
@@ -210,32 +532,42 @@ function collectWorkspaceHandlers(
   }
 
   const candidateFiles = new Set<string>([
-    joinFsPath(playbookDir, 'handlers/main.yml'),
-    joinFsPath(playbookDir, 'handlers/main.yaml'),
-    joinFsPath(dirnamePath(playbookDir), 'handlers/main.yml'),
-    joinFsPath(dirnamePath(playbookDir), 'handlers/main.yaml'),
-    joinFsPath(workspaceRoot, 'handlers/main.yml'),
-    joinFsPath(workspaceRoot, 'handlers/main.yaml'),
+    joinFsPath(context.documentDir, 'handlers/main.yml'),
+    joinFsPath(context.documentDir, 'handlers/main.yaml'),
+    joinFsPath(dirnamePath(context.documentDir), 'handlers/main.yml'),
+    joinFsPath(dirnamePath(context.documentDir), 'handlers/main.yaml'),
+    joinFsPath(context.ansibleRoot, 'handlers/main.yml'),
+    joinFsPath(context.ansibleRoot, 'handlers/main.yaml'),
+    joinFsPath(context.workspaceRoot, 'handlers/main.yml'),
+    joinFsPath(context.workspaceRoot, 'handlers/main.yaml'),
   ]);
 
   if (play) {
     for (const role of play.roles) {
-      candidateFiles.add(joinFsPath(playbookDir, 'roles', role.name, 'handlers/main.yml'));
-      candidateFiles.add(joinFsPath(playbookDir, 'roles', role.name, 'handlers/main.yaml'));
-      candidateFiles.add(joinFsPath(workspaceRoot, 'roles', role.name, 'handlers/main.yml'));
-      candidateFiles.add(joinFsPath(workspaceRoot, 'roles', role.name, 'handlers/main.yaml'));
+      for (const roleBase of context.rolesPaths) {
+        candidateFiles.add(joinFsPath(roleBase, role.name, 'handlers/main.yml'));
+        candidateFiles.add(joinFsPath(roleBase, role.name, 'handlers/main.yaml'));
+      }
     }
   }
 
-  const rolesDir = joinFsPath(workspaceRoot, 'roles');
-  for (const entry of fs.listFiles(rolesDir)) {
-    const cleanEntry = trimTrailingSlashes(normalizeSlash(entry));
-    const roleName = cleanEntry.includes('/')
-      ? cleanEntry.slice(cleanEntry.lastIndexOf('/') + 1)
-      : cleanEntry;
-    if (roleName.length > 0) {
-      candidateFiles.add(joinFsPath(rolesDir, roleName, 'handlers/main.yml'));
-      candidateFiles.add(joinFsPath(rolesDir, roleName, 'handlers/main.yaml'));
+  for (const roleBase of context.rolesPaths) {
+    if (!roleBase.endsWith('/roles') && !parsedRolePathLookalike(roleBase)) {
+      continue;
+    }
+    for (const entry of fs.listFiles(roleBase)) {
+      const cleanEntry = trimTrailingSlashes(normalizeSlash(entry));
+      if (cleanEntry.endsWith('/handlers/main.yml') || cleanEntry.endsWith('/handlers/main.yaml')) {
+        candidateFiles.add(cleanEntry);
+        continue;
+      }
+      const roleName = cleanEntry.includes('/')
+        ? cleanEntry.slice(cleanEntry.lastIndexOf('/') + 1)
+        : cleanEntry;
+      if (roleName.length > 0) {
+        candidateFiles.add(joinFsPath(roleBase, roleName, 'handlers/main.yml'));
+        candidateFiles.add(joinFsPath(roleBase, roleName, 'handlers/main.yaml'));
+      }
     }
   }
 
@@ -254,19 +586,21 @@ function collectWorkspaceHandlers(
   return known;
 }
 
+function parsedRolePathLookalike(dirPath: string): boolean {
+  return dirPath.includes('role');
+}
+
 function collectInventoryTargets(
-  workspaceRoot: string,
+  context: AnsibleProjectContext,
   fs: IWorkspaceFs,
 ): {
   readonly hasInventory: boolean;
   readonly targets: Set<string>;
 } {
-  const candidates = ['inventory', 'hosts', 'hosts.ini', 'inventory.yml', 'inventory.yaml'];
   let hasInventory = false;
   const targets = new Set<string>();
 
-  for (const fileName of candidates) {
-    const fullPath = joinFsPath(workspaceRoot, fileName);
+  for (const fullPath of context.inventoryPaths) {
     if (!fs.exists(fullPath)) {
       continue;
     }
@@ -276,7 +610,7 @@ function collectInventoryTargets(
     }
     hasInventory = true;
 
-    if (fileName.endsWith('.yml') || fileName.endsWith('.yaml')) {
+    if (fullPath.endsWith('.yml') || fullPath.endsWith('.yaml')) {
       parseYamlInventory(content, targets);
     } else {
       parseIniInventory(content, targets);
@@ -370,8 +704,7 @@ function parseYamlInventory(content: string, targets: Set<string>): void {
 function checkMissingSrcFile(
   task: TaskNode,
   docPath: string,
-  playbookDir: string,
-  workspaceRoot: string,
+  context: AnsibleProjectContext,
   fs: IWorkspaceFs,
   diagnostics: LintDiagnostic[],
 ): void {
@@ -395,14 +728,16 @@ function checkMissingSrcFile(
     ? rawNormalizedSrc.slice(2)
     : rawNormalizedSrc;
   const subdir = shortMod === 'copy' ? 'files' : 'templates';
-  const docParent = dirnamePath(playbookDir);
+  const docParent = dirnamePath(context.documentDir);
 
   const candidates = new Set<string>([
-    joinFsPath(playbookDir, normalizedSrc),
-    joinFsPath(playbookDir, subdir, normalizedSrc),
+    joinFsPath(context.documentDir, normalizedSrc),
+    joinFsPath(context.documentDir, subdir, normalizedSrc),
     joinFsPath(docParent, subdir, normalizedSrc),
-    joinFsPath(workspaceRoot, normalizedSrc),
-    joinFsPath(workspaceRoot, subdir, normalizedSrc),
+    joinFsPath(context.ansibleRoot, normalizedSrc),
+    joinFsPath(context.ansibleRoot, subdir, normalizedSrc),
+    joinFsPath(context.workspaceRoot, normalizedSrc),
+    joinFsPath(context.workspaceRoot, subdir, normalizedSrc),
   ]);
 
   if (normalizedSrc.startsWith('/')) {
@@ -461,9 +796,8 @@ export function checkProjectIntegrity(
   fs: IWorkspaceFs,
 ): readonly LintDiagnostic[] {
   const diagnostics: LintDiagnostic[] = [];
-  const normalizedRoot = normalizeSlash(workspaceRoot);
   const docPath = uriToFsPath(ast.uri);
-  const playbookDir = docPath.includes('/') ? dirnamePath(docPath) : normalizedRoot;
+  const context = discoverAnsibleProjectContext(ast.uri, workspaceRoot, fs);
 
   const checkedRoleNames = new Set<string>();
 
@@ -474,7 +808,7 @@ export function checkProjectIntegrity(
     if (containsJinja(roleName)) {
       return;
     }
-    const dedupKey = `${roleName}@${range.start.offset}`;
+    const dedupKey = `${roleName}@${range.start.line}:${range.start.column}`;
     if (checkedRoleNames.has(dedupKey)) {
       return;
     }
@@ -491,7 +825,7 @@ export function checkProjectIntegrity(
       return;
     }
 
-    const roleDir = resolveRoleDir(roleName, normalizedRoot, playbookDir, fs);
+    const roleDir = resolveRoleDir(roleName, context, fs);
     if (roleDir === undefined) {
       diagnostics.push({
         ruleId: 'missing-role',
@@ -514,7 +848,7 @@ export function checkProjectIntegrity(
     }
   };
 
-  const inventoryInfo = collectInventoryTargets(normalizedRoot, fs);
+  const inventoryInfo = collectInventoryTargets(context, fs);
 
   const validateTaskList = (tasks: readonly TaskNode[], knownHandlers: Set<string>): void => {
     for (const task of tasks) {
@@ -546,7 +880,7 @@ export function checkProjectIntegrity(
         }
       }
 
-      checkMissingSrcFile(task, docPath, playbookDir, normalizedRoot, fs, diagnostics);
+      checkMissingSrcFile(task, docPath, context, fs, diagnostics);
     }
   };
 
@@ -581,7 +915,7 @@ export function checkProjectIntegrity(
       }
     }
 
-    const knownHandlers = collectWorkspaceHandlers(ast, play, normalizedRoot, playbookDir, fs);
+    const knownHandlers = collectWorkspaceHandlers(ast, play, context, fs);
     validateTaskList(play.preTasks, knownHandlers);
     validateTaskList(play.tasks, knownHandlers);
     validateTaskList(play.postTasks, knownHandlers);
@@ -589,7 +923,7 @@ export function checkProjectIntegrity(
   }
 
   if (ast.tasks.length > 0 || ast.handlers.length > 0) {
-    const knownHandlers = collectWorkspaceHandlers(ast, undefined, normalizedRoot, playbookDir, fs);
+    const knownHandlers = collectWorkspaceHandlers(ast, undefined, context, fs);
     validateTaskList(ast.tasks, knownHandlers);
     validateTaskList(ast.handlers, knownHandlers);
   }

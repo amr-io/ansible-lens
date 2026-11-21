@@ -31,6 +31,16 @@
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
+    "configuration": {
+      "title": "Ansible Lens",
+      "properties": {
+        "ansibleLens.documentLinks.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable clickable document links (underlines) on Ansible module names. Defaults to false so playbooks have zero permanent underlines; hover tooltips always include clickable official documentation links."
+        }
+      }
+    },
     "commands": [
       {
         "command": "ansibleLens.openOfficialDocs",
