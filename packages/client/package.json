@@ -38,6 +38,11 @@
           "type": "boolean",
           "default": false,
           "description": "Enable clickable document links (underlines) on Ansible module names. Defaults to false so playbooks have zero permanent underlines; hover tooltips always include clickable official documentation links."
+        },
+        "ansibleLens.docs.openRenderedPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "When Ctrl+Click (Go to Definition) on a module name opens its read-only ansible-lens-docs page, show it as a rendered Markdown preview instead of raw Markdown."
         }
       }
     },
@@ -69,7 +74,8 @@
   "scripts": {
     "build": "tsc -b tsconfig.json && node scripts/bundle.mjs",
     "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.json --noEmit",
-    "package:vsix": "npm run build && npx @vscode/vsce package --no-dependencies -o ansible-lens-0.1.0.vsix"
+    "package:vsix": "npm run build && npx @vscode/vsce package --no-dependencies -o ansible-lens-0.1.0.vsix",
+    "test:e2e": "npm run build && node dist/e2e/runTest.cjs"
   },
   "dependencies": {
     "@ansible-lens/core": "0.1.0",

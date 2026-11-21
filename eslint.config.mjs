@@ -8,6 +8,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/out/**',
       '**/coverage/**',
+      '**/.vscode-test/**',
       '**/*.js',
       '**/*.cjs',
       '**/*.mjs',

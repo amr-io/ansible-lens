@@ -63,6 +63,20 @@ jobs:
       - name: Run unit, fuzz, performance & LSP integration tests with coverage
         run: npm test
 
+      - name: Install Xvfb & GTK/X11 shared libraries for headless VS Code E2E (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libx11-xcb1
+
+      - name: Run headless VS Code E2E tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e
+
+      - name: Run headless VS Code E2E tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:e2e
+
       - name: Package VS Code extension (.vsix)
         run: npm run package:vsix
 

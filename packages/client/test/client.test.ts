@@ -149,3 +149,20 @@ describe('Ansible Lens VS Code Client — Smart Hybrid Activation, Grammar, Logg
     expect(fs.existsSync(path.join(CLIENT_ROOT, 'media/icon.svg'))).toBe(true);
   });
 });
+
+describe('ansible-lens-docs virtual document helpers', () => {
+  it('parses module names from docs URIs and builds offline docs fallbacks', async () => {
+    const { parseModuleNameFromDocsPath, buildOfflineDocUrl, formatOfflineDocsMarkdown } =
+      await import('../src/docs-uri.js');
+    expect(parseModuleNameFromDocsPath('/ansible.builtin.stat.md')).toBe('ansible.builtin.stat');
+    expect(parseModuleNameFromDocsPath('community.general.ufw')).toBe('community.general.ufw');
+    expect(parseModuleNameFromDocsPath('/bad%E0%A4%A.md')).toBe('bad%E0%A4%A');
+    expect(buildOfflineDocUrl('ansible.posix.sysctl')).toBe(
+      'https://docs.ansible.com/ansible/latest/collections/ansible/posix/sysctl_module.html',
+    );
+    expect(buildOfflineDocUrl('copy')).toContain('collections/index.html');
+    expect(formatOfflineDocsMarkdown('ansible.posix.sysctl').split('\n')[0]).toContain(
+      'docs.ansible.com',
+    );
+  });
+});

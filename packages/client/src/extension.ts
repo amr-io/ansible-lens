@@ -8,6 +8,12 @@ import {
   type ServerOptions,
 } from 'vscode-languageclient/node.js';
 import { shouldActivateForDocument, workspaceHasAnsibleCfg } from './activation.js';
+import {
+  GET_MODULE_DOCS_REQUEST,
+  MODULE_DOCS_SCHEME,
+  ModuleDocsContentProvider,
+  showRenderedDocsPreview,
+} from './docs-provider.js';
 import { createClientLogger, type ClientLogger } from './logger.js';
 
 export const EXTENSION_ID = 'amr-vibe.ansible-lens';
@@ -234,6 +240,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             error: error instanceof Error ? error.message : String(error),
           });
         }
+      }
+    }),
+  );
+
+  const languageClient = client;
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      MODULE_DOCS_SCHEME,
+      new ModuleDocsContentProvider({
+        requestMarkdown: async (moduleName) => {
+          try {
+            if (!languageClient.isRunning()) {
+              await languageClient.start();
+            }
+            const res = await languageClient.sendRequest<{ markdown: string }>(
+              GET_MODULE_DOCS_REQUEST,
+              { moduleName },
+            );
+            return res.markdown;
+          } catch (error) {
+            logger.warn('Failed to fetch module docs from server', {
+              moduleName,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return undefined;
+          }
+        },
+      }),
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+      const renderPreview = vscode.workspace
+        .getConfiguration('ansibleLens')
+        .get<boolean>('docs.openRenderedPreview', true);
+      if (!renderPreview) {
+        return;
+      }
+      try {
+        await showRenderedDocsPreview(editor);
+      } catch (error) {
+        logger.warn('Failed to open rendered docs preview', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }),
   );

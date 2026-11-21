@@ -149,6 +149,14 @@ export function bindLanguageServer(
     },
   );
 
+  connection.onRequest(
+    'ansibleLens/getModuleDocsMarkdown',
+    (params?: { readonly moduleName?: string }) => {
+      const moduleName = typeof params?.moduleName === 'string' ? params.moduleName : '';
+      return { markdown: engine.getModuleDocsMarkdown(moduleName) };
+    },
+  );
+
   connection.onRequest('ansibleLens/refreshMetadata', () => {
     engine.indexWorkspace();
     for (const doc of documents.all()) {
