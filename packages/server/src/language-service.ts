@@ -29,6 +29,7 @@ import {
   type DocumentLink,
   type Hover,
   type Location,
+  type LocationLink,
   type Position,
   type Range,
   type TextEdit,
@@ -570,7 +571,11 @@ export class AnsibleLanguageService {
     return formatUnloadedModuleDocsPageMarkdown(moduleName);
   }
 
-  public getDefinition(uri: string, position: Position, text?: string): Location[] {
+  public getDefinition(
+    uri: string,
+    position: Position,
+    text?: string,
+  ): Location[] | LocationLink[] {
     const docText = text ?? this.documents.get(uri)?.text;
     if (docText === undefined) {
       return [];
@@ -584,6 +589,9 @@ export class AnsibleLanguageService {
     const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
     const lines = docText.split(/\r?\n/);
     const line = lines[position.line] ?? '';
+    if (isPositionInYamlComment(line, position.character)) {
+      return [];
+    }
     const root = this.findWorkspaceRootForUri(uri) ?? path.dirname(uriToFsPath(uri));
     const projectCtx = discoverAnsibleProjectContext(uri, root, this.fs);
 
@@ -653,14 +661,24 @@ export class AnsibleLanguageService {
       }
     }
 
-    // 4. notify: -> matching handler definition across play & workspace
+    // 4. notify: -> matching handler definition across play & workspace (LocationLink for multi-word highlight)
     const task = this.findTaskAtLine(ast, position.line);
-    if (task?.notify && task.notify.length > 0 && /notify\s*:|^\s*-\s+/.test(line)) {
-      const handlerName = this.extractHandlerNameOnLine(line, task.notify);
-      if (handlerName) {
-        const locs = this.findHandlerLocations(handlerName);
+    if (task?.notify && task.notify.length > 0) {
+      const notifyMatch = this.extractNotifyHandlerAtPosition(
+        lines,
+        position.line,
+        position.character,
+        task.notify,
+      );
+      if (notifyMatch) {
+        const locs = this.findHandlerLocations(notifyMatch.handlerName);
         if (locs.length > 0) {
-          return locs;
+          return locs.map((loc): LocationLink => ({
+            originSelectionRange: notifyMatch.originSelectionRange,
+            targetUri: loc.uri,
+            targetRange: loc.range,
+            targetSelectionRange: loc.range,
+          }));
         }
       }
     }
@@ -1135,31 +1153,96 @@ export class AnsibleLanguageService {
     return locs;
   }
 
-  private extractHandlerNameOnLine(
-    line: string,
+  private extractNotifyHandlerAtPosition(
+    lines: readonly string[],
+    lineIdx: number,
+    character: number,
     notifyNames: readonly string[],
-  ): string | undefined {
-    let cleaned = line.trim();
-    if (cleaned.startsWith('-')) {
-      cleaned = cleaned.slice(1).trimStart();
+  ): { readonly handlerName: string; readonly originSelectionRange: Range } | undefined {
+    const line = lines[lineIdx] ?? '';
+    const indent = countLeadingSpaces(line);
+    const trimmed = line.slice(indent);
+    if (trimmed.length === 0 || trimmed.startsWith('#')) {
+      return undefined;
     }
-    if (cleaned.startsWith('notify')) {
-      const afterNotify = cleaned.slice('notify'.length).trimStart();
-      if (afterNotify.startsWith(':')) {
-        cleaned = afterNotify.slice(1).trimStart();
+
+    // Determine the raw value slice [rawValueStart, line.length) ONLY if this line is:
+    //   (a) `notify: <handler>` (inline value on the notify key line), OR
+    //   (b) `- <handler>` strictly nested as a sequence item under a `notify:` key.
+    let rawValueStart = -1;
+
+    const lineKey = extractYamlLineKey(line);
+    if (lineKey === 'notify') {
+      const colonIdx = line.indexOf(':', indent);
+      if (colonIdx === -1 || character <= colonIdx) {
+        return undefined;
+      }
+      rawValueStart = colonIdx + 1;
+    } else if (isYamlSequenceItem(trimmed)) {
+      // Never match `- name: ...` or any other mapping entry inside a task.
+      if (lineKey !== undefined) {
+        return undefined;
+      }
+      if (!isWithinNotifySequence(lines, lineIdx)) {
+        return undefined;
+      }
+      rawValueStart = indent + 1;
+    } else {
+      return undefined;
+    }
+
+    // Skip leading whitespace before the handler value.
+    let startCol = rawValueStart;
+    while (startCol < line.length && (line[startCol] === ' ' || line[startCol] === '\t')) {
+      startCol++;
+    }
+    if (startCol >= line.length) {
+      return undefined;
+    }
+
+    // Find end of scalar value, handling optional single/double quotes and ignoring trailing `# comment`.
+    let endCol = line.length;
+    const firstCh = line[startCol];
+    if (firstCh === '"' || firstCh === "'") {
+      const closeIdx = findClosingQuote(line, startCol + 1, firstCh);
+      if (closeIdx === -1) {
+        return undefined;
+      }
+      // Exclude the surrounding quotes from the handler name and highlight range.
+      startCol += 1;
+      endCol = closeIdx;
+    } else {
+      // Strip trailing unquoted `# comment` (preceded by whitespace or start of value).
+      const commentIdx = findUnquotedCommentIndex(line, startCol);
+      if (commentIdx !== -1) {
+        endCol = commentIdx;
+      }
+      while (endCol > startCol && (line[endCol - 1] === ' ' || line[endCol - 1] === '\t')) {
+        endCol--;
       }
     }
-    if (
-      cleaned.length >= 2 &&
-      ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
-        (cleaned.startsWith("'") && cleaned.endsWith("'")))
-    ) {
-      cleaned = cleaned.slice(1, -1);
+
+    if (endCol <= startCol) {
+      return undefined;
     }
-    if (notifyNames.includes(cleaned)) {
-      return cleaned;
+
+    // Cursor must be strictly inside the handler value span (not on `notify:`, `- `, whitespace, or `# comment`).
+    if (character < startCol || character > endCol) {
+      return undefined;
     }
-    return notifyNames[0];
+
+    const candidate = line.slice(startCol, endCol);
+    if (!notifyNames.includes(candidate)) {
+      return undefined;
+    }
+
+    return {
+      handlerName: candidate,
+      originSelectionRange: {
+        start: { line: lineIdx, character: startCol },
+        end: { line: lineIdx, character: endCol },
+      },
+    };
   }
 
   private resolveTaskAssetPath(
@@ -1414,6 +1497,97 @@ function extractYamlLineKey(line: string): string | undefined {
     }
   }
   return key;
+}
+
+/**
+ * Walks upward from a YAML sequence item line to verify its enclosing mapping key is `notify:`.
+ */
+function isWithinNotifySequence(lines: readonly string[], lineIdx: number): boolean {
+  const current = lines[lineIdx] ?? '';
+  const currentIndent = countLeadingSpaces(current);
+  const stop = Math.max(0, lineIdx - MAX_CONDITION_WALK_LINES);
+  for (let i = lineIdx - 1; i >= stop; i--) {
+    const candidate = lines[i] ?? '';
+    const indent = countLeadingSpaces(candidate);
+    const body = candidate.slice(indent);
+    if (body.length === 0 || body.startsWith('#')) {
+      continue;
+    }
+    if (indent > currentIndent) {
+      continue;
+    }
+    const candidateIsItem = isYamlSequenceItem(body);
+    if (indent === currentIndent) {
+      if (candidateIsItem) {
+        if (extractYamlLineKey(candidate) !== undefined) {
+          // Hit a task-level `- name:` / `- module:` mapping item, not a plain notify list sibling.
+          return false;
+        }
+        continue;
+      }
+      // `notify:` followed by a zero-indented `- Handler` sequence.
+      return extractYamlLineKey(candidate) === 'notify';
+    }
+    return extractYamlLineKey(candidate) === 'notify';
+  }
+  return false;
+}
+
+/** Finds the matching closing quote index for a single- or double-quoted YAML scalar. */
+function findClosingQuote(line: string, startAfterOpen: number, quote: string): number {
+  for (let i = startAfterOpen; i < line.length; i++) {
+    const ch = line[i];
+    if (quote === '"' && ch === '\\' && i + 1 < line.length) {
+      i++;
+      continue;
+    }
+    if (quote === "'" && ch === "'" && line[i + 1] === "'") {
+      i++;
+      continue;
+    }
+    if (ch === quote) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Finds the index of a YAML `#` comment starting at or after `fromIdx` (preceded by whitespace or start). */
+function findUnquotedCommentIndex(line: string, fromIdx: number): number {
+  for (let i = fromIdx; i < line.length; i++) {
+    if (line[i] === '#') {
+      if (i === fromIdx || line[i - 1] === ' ' || line[i - 1] === '\t') {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+/** Returns true if `character` falls inside a YAML `# ...` comment (ignoring `#` inside quotes). */
+function isPositionInYamlComment(line: string, character: number): boolean {
+  let quote: string | undefined;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote !== undefined) {
+      if (quote === '"' && ch === '\\' && i + 1 < line.length) {
+        i++;
+        continue;
+      }
+      if (ch === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '#' && (i === 0 || line[i - 1] === ' ' || line[i - 1] === '\t')) {
+      return character >= i;
+    }
+  }
+  return false;
 }
 
 /**

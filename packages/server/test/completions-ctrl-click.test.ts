@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CompletionItemKind,
   type CompletionItem,
+  type Location,
   type Position,
   type TextEdit,
 } from 'vscode-languageserver/node.js';
@@ -196,7 +197,7 @@ describe('Pylance-style Ctrl+Click module docs and zero permanent underlines', (
     const lines = text.split('\n');
     const line = lines.findIndex((l) => l.includes('ansible.builtin.stat:'));
     const character = (lines[line] ?? '').indexOf('ansible.builtin.stat') + 5;
-    const locs = service.getDefinition(ROLE_URI, { line, character }, text);
+    const locs = service.getDefinition(ROLE_URI, { line, character }, text) as Location[];
     expect(locs).toHaveLength(1);
     expect(locs[0]?.uri).toBe(buildModuleDocsUri('ansible.builtin.stat'));
     expect(locs[0]?.uri.startsWith(`${MODULE_DOCS_SCHEME}:`)).toBe(true);
@@ -223,7 +224,7 @@ describe('Pylance-style Ctrl+Click module docs and zero permanent underlines', (
     const lines = text.split('\n');
     const line = lines.findIndex((l) => l.includes('- not overleaf_version_file.stat.isdir'));
     const character = (lines[line] ?? '').indexOf('overleaf_version_file') + 3;
-    const locs = service.getDefinition(ROLE_URI, { line, character }, text);
+    const locs = service.getDefinition(ROLE_URI, { line, character }, text) as Location[];
     const registerLine = lines.findIndex((l) => l.includes('register: overleaf_version_file'));
     expect(locs[0]?.uri).toBe(ROLE_URI);
     expect(locs[0]?.range.start.line).toBe(registerLine);

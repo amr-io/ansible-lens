@@ -13,6 +13,7 @@ import type {
   InitializeParams,
   InitializeResult,
   Location,
+  LocationLink,
 } from 'vscode-languageserver/node.js';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { AnsibleLanguageService } from './language-service.js';
@@ -121,7 +122,7 @@ export function bindLanguageServer(
     return engine.getDocumentLinks(params.textDocument.uri, doc?.getText());
   });
 
-  connection.onDefinition((params): Location[] => {
+  connection.onDefinition((params): Location[] | LocationLink[] => {
     const doc = documents.get(params.textDocument.uri);
     return engine.getDefinition(params.textDocument.uri, params.position, doc?.getText());
   });
