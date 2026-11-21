@@ -25,7 +25,7 @@ import { resolveOpenInBrowserUrl } from './docs-uri.js';
 import { evaluateJinjaBraceAutoSpace } from './jinja-autospace.js';
 import { createClientLogger, type ClientLogger } from './logger.js';
 
-export const EXTENSION_ID = 'amr-vibe.ansible-lens';
+export const EXTENSION_ID = 'amr-io.ansible-lens';
 export const OFFICIAL_DOCS_URL =
   'https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html';
 
@@ -115,7 +115,7 @@ function readWorkspaceSettings(): ServerSettings {
       autoDownload: cfg.get<boolean>('metadata.autoDownload', true),
       manifestUrl: cfg.get<string>(
         'metadata.manifestUrl',
-        'https://github.com/amr-vibe/ansible-lens/releases/download/metadata-latest/manifest.json',
+        'https://github.com/amr-io/ansible-lens/releases/download/metadata-latest/manifest.json',
       ),
     },
     ansibleRootPaths: cfg.get<readonly string[]>('ansible.rootPaths', []),
@@ -319,7 +319,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand(COMMAND_COPY_DIAGNOSTICS_INFO, async () => {
       const extVersion =
         (context.extension.packageJSON as { readonly version?: string } | undefined)?.version ??
-        '0.1.1';
+        '0.1.2';
       let serverInfo: DiagnosticsInfoReport | undefined;
       if (client && client.isRunning()) {
         try {

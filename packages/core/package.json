@@ -1,6 +1,6 @@
 {
   "name": "@ansible-lens/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Pure TypeScript domain engine for Ansible Lens (YAML+Jinja2 CST parser, static metadata packs, variable graph, type inference, clean-room linter)",
   "license": "MIT",
   "type": "module",

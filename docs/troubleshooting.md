@@ -62,7 +62,7 @@ If you have `redhat.ansible` installed alongside **Ansible Lens**:
 
 ### Air-Gapped / Internal Mirror Setup
 
-1. Download `manifest.json` and the `.json.gz` collection packs from the [`metadata-latest` GitHub Release](https://github.com/amr-vibe/ansible-lens/releases/tag/metadata-latest) and host them on an internal HTTP server or artifact repository.
+1. Download `manifest.json` and the `.json.gz` collection packs from the [`metadata-latest` GitHub Release](https://github.com/amr-io/ansible-lens/releases/tag/metadata-latest) and host them on an internal HTTP server or artifact repository.
 2. Point `ansibleLens.metadata.manifestUrl` to your internal `manifest.json`:
 
 ```json

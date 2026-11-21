@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-21
+
+### Fixed
+- **Debounced Diagnostics & Incremental Revalidation (`packages/server`):** Debounced `documents.onDidChangeContent` (~200ms) for the active document, restricted `revalidateAllOpenDocuments()` to shared provider files (`defaults/`, `vars/`, `group_vars/`, `host_vars/`, `handlers/`, `vars_files:`, `site.yml`, `inventory`), removed duplicate revalidation on `onDidOpen`, and debounced `onDidChangeWatchedFiles` (~350ms) with incremental file-only re-indexing.
+- **Zero-Flash `openInBrowser` Ctrl+Click (`packages/client`):** Intercepted `provideDefinition` in `LanguageClient` middleware when `ansibleLens.docs.ctrlClickBehavior` is `"openInBrowser"` so VS Code opens `docs.ansible.com` directly without ever opening or flashing an unrendered `.md` tab.
+
+### Changed
+- **Rebrand to `amr-io` & Marketplace SEO:** Updated publisher (`amr-io`), repository/homepage/bugs URLs, `manifestUrl` default, categories, keywords, gallery banner (`#111827`), crisp 512×512 PNG lens icon rendered from vector SVG, `1280×640` GitHub social preview card (`docs/assets/social-preview.png`), and rewritten `README.md` with comparison table, verified benchmarks (~10.73 ms vs. ~2,622.4 ms `ansible-lint`), and Zero Telemetry commitment.
+
+### Security & CI
+- **SLSA Build Provenance & CycloneDX SBOM:** Updated `.github/workflows/release.yml` to generate `sbom.cdx.json` (`npm sbom --sbom-format cyclonedx`) and attest `.vsix` build provenance via `actions/attest-build-provenance`.
+- **OpenSSF Scorecard & Verifiable Benchmarks:** Added `.github/workflows/scorecard.yml` (`ossf/scorecard-action`) and `.github/workflows/benchmarks.yml` (`scripts/benchmark-playbook.mjs`).
+
 ## [0.1.1] - 2026-11-21
 
 ### Added
@@ -61,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI/CD & Documentation:**
   - Added SHA-pinned GitHub Actions workflows (`ci.yml`, `codeql.yml`, `build-metadata.yml`, `release.yml`), `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, and `THIRD_PARTY_NOTICES.md`.
 
-[Unreleased]: https://github.com/amr-vibe/ansible-lens/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/amr-vibe/ansible-lens/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/amr-vibe/ansible-lens/releases/tag/v0.1.0
+[Unreleased]: https://github.com/amr-io/ansible-lens/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/amr-io/ansible-lens/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/amr-io/ansible-lens/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/amr-io/ansible-lens/releases/tag/v0.1.0
