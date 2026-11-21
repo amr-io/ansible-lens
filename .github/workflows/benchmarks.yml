@@ -1,0 +1,45 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Benchmark Ansible Lens vs. ansible-lint (300-line playbook)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Node dependencies & build @ansible-lens/core
+        run: |
+          npm ci
+          npm run build --workspace=packages/core
+
+      - name: Install ansible-lint (Python)
+        run: python -m pip install --no-cache-dir ansible-lint
+
+      - name: Run 5-iteration benchmark (300-line playbook)
+        run: node scripts/benchmark-playbook.mjs
