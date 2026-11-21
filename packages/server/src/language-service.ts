@@ -700,9 +700,9 @@ export class AnsibleLanguageService {
       for (const vf of play.varsFiles) {
         if (isPositionInRange(position, vf.range)) {
           const candidates = [
-            path.resolve(projectCtx.documentDir, vf.path),
-            path.resolve(projectCtx.ansibleRoot, vf.path),
-            path.resolve(root, vf.path),
+            resolveRelativeFsPath(projectCtx.documentDir, vf.path),
+            resolveRelativeFsPath(projectCtx.ansibleRoot, vf.path),
+            resolveRelativeFsPath(root, vf.path),
           ];
           for (const resolved of candidates) {
             if (this.fs.exists(resolved)) {
@@ -1014,9 +1014,9 @@ export class AnsibleLanguageService {
             continue;
           }
           const candidates = [
-            path.resolve(projectCtx.documentDir, vf.path),
-            path.resolve(projectCtx.ansibleRoot, vf.path),
-            path.resolve(root, vf.path),
+            resolveRelativeFsPath(projectCtx.documentDir, vf.path),
+            resolveRelativeFsPath(projectCtx.ansibleRoot, vf.path),
+            resolveRelativeFsPath(root, vf.path),
           ];
           for (const candidate of candidates) {
             if (this.fs.exists(candidate)) {
@@ -1040,12 +1040,12 @@ export class AnsibleLanguageService {
           (typeof fileParam?.value === 'string' ? fileParam.value : undefined) ?? task.freeFormArg;
         if (fileRef && !fileRef.includes('{{')) {
           const candidates = [
-            path.resolve(projectCtx.documentDir, fileRef),
-            path.resolve(projectCtx.documentDir, 'vars', fileRef),
-            path.resolve(projectCtx.documentDir, '..', 'vars', fileRef),
-            path.resolve(projectCtx.ansibleRoot, fileRef),
-            path.resolve(projectCtx.ansibleRoot, 'vars', fileRef),
-            path.resolve(root, fileRef),
+            resolveRelativeFsPath(projectCtx.documentDir, fileRef),
+            resolveRelativeFsPath(projectCtx.documentDir, 'vars', fileRef),
+            resolveRelativeFsPath(projectCtx.documentDir, '..', 'vars', fileRef),
+            resolveRelativeFsPath(projectCtx.ansibleRoot, fileRef),
+            resolveRelativeFsPath(projectCtx.ansibleRoot, 'vars', fileRef),
+            resolveRelativeFsPath(root, fileRef),
           ];
           for (const candidate of candidates) {
             if (this.fs.exists(candidate)) {
@@ -1056,10 +1056,10 @@ export class AnsibleLanguageService {
         }
         if (typeof dirParam?.value === 'string' && !dirParam.value.includes('{{')) {
           const dirCandidates = [
-            path.resolve(projectCtx.documentDir, dirParam.value),
-            path.resolve(projectCtx.documentDir, '..', dirParam.value),
-            path.resolve(projectCtx.ansibleRoot, dirParam.value),
-            path.resolve(root, dirParam.value),
+            resolveRelativeFsPath(projectCtx.documentDir, dirParam.value),
+            resolveRelativeFsPath(projectCtx.documentDir, '..', dirParam.value),
+            resolveRelativeFsPath(projectCtx.ansibleRoot, dirParam.value),
+            resolveRelativeFsPath(root, dirParam.value),
           ];
           for (const dirCandidate of dirCandidates) {
             if (this.fs.exists(dirCandidate)) {
@@ -1487,6 +1487,14 @@ export class AnsibleLanguageService {
     }
     return this.workspaceRoots[0];
   }
+}
+
+function resolveRelativeFsPath(baseDir: string, ...segments: readonly string[]): string {
+  const normalizedBase = baseDir.replaceAll('\\', '/');
+  if (normalizedBase.startsWith('/')) {
+    return path.posix.resolve(normalizedBase, ...segments.map((s) => s.replaceAll('\\', '/')));
+  }
+  return path.resolve(baseDir, ...segments);
 }
 
 function countLeadingSpaces(line: string): number {
