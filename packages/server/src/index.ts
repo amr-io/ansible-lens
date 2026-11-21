@@ -8,6 +8,7 @@ export {
 } from './language-service.js';
 export type {
   DiagnosticsInfoReport,
+  DocsCtrlClickBehavior,
   InventoryInfo,
   LanguageServiceOptions,
   LintConfiguration,

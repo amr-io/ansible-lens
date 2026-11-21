@@ -8,7 +8,6 @@ import type {
   CodeAction,
   CompletionItem,
   Connection,
-  DocumentLink,
   Hover,
   InitializeParams,
   InitializeResult,
@@ -16,13 +15,24 @@ import type {
   LocationLink,
 } from 'vscode-languageserver/node.js';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { AnsibleLanguageService, type ServerSettings } from './language-service.js';
+import {
+  AnsibleLanguageService,
+  type DocsCtrlClickBehavior,
+  type ServerSettings,
+} from './language-service.js';
 import { createServerLogger } from './logger.js';
 
 export interface BoundServer {
   readonly connection: Connection;
   readonly documents: TextDocuments<TextDocument>;
   readonly service: AnsibleLanguageService;
+}
+
+function parseDocsCtrlClickBehavior(raw: unknown): DocsCtrlClickBehavior | undefined {
+  if (raw === 'renderedPreview' || raw === 'openInBrowser' || raw === 'disabled') {
+    return raw;
+  }
+  return undefined;
 }
 
 function extractServerSettings(raw: unknown): ServerSettings | undefined {
@@ -35,16 +45,13 @@ function extractServerSettings(raw: unknown): ServerSettings | undefined {
       ? (obj['ansibleLens'] as Record<string, unknown>)
       : obj;
 
-  const docLinksObj =
-    typeof root['documentLinks'] === 'object' && root['documentLinks'] !== null
-      ? (root['documentLinks'] as Record<string, unknown>)
+  const docsObj =
+    typeof root['docs'] === 'object' && root['docs'] !== null
+      ? (root['docs'] as Record<string, unknown>)
       : undefined;
-  const documentLinksEnabled =
-    typeof root['documentLinksEnabled'] === 'boolean'
-      ? root['documentLinksEnabled']
-      : typeof docLinksObj?.['enabled'] === 'boolean'
-        ? docLinksObj['enabled']
-        : undefined;
+  const docsCtrlClickBehavior =
+    parseDocsCtrlClickBehavior(root['docsCtrlClickBehavior']) ??
+    parseDocsCtrlClickBehavior(docsObj?.['ctrlClickBehavior']);
 
   const lintObj =
     typeof root['lint'] === 'object' && root['lint'] !== null
@@ -66,7 +73,7 @@ function extractServerSettings(raw: unknown): ServerSettings | undefined {
       : undefined;
 
   return {
-    ...(documentLinksEnabled !== undefined ? { documentLinksEnabled } : {}),
+    ...(docsCtrlClickBehavior !== undefined ? { docsCtrlClickBehavior } : {}),
     ...(lintObj
       ? {
           lint: {
@@ -205,9 +212,6 @@ export function bindLanguageServer(
         hoverProvider: true,
         definitionProvider: true,
         referencesProvider: true,
-        documentLinkProvider: {
-          resolveProvider: false,
-        },
         codeActionProvider: {
           codeActionKinds: ['quickfix', 'source.fixAll.ansible-lens.fqcn'],
         },
@@ -274,11 +278,6 @@ export function bindLanguageServer(
     return engine.getHover(params.textDocument.uri, params.position, doc?.getText());
   });
 
-  connection.onDocumentLinks((params): DocumentLink[] => {
-    const doc = documents.get(params.textDocument.uri);
-    return engine.getDocumentLinks(params.textDocument.uri, doc?.getText());
-  });
-
   connection.onDefinition((params): Location[] | LocationLink[] => {
     const doc = documents.get(params.textDocument.uri);
     return engine.getDefinition(params.textDocument.uri, params.position, doc?.getText());
@@ -298,14 +297,6 @@ export function bindLanguageServer(
     collectionsCount: engine.getLoadedCollectionsCount(),
     modulesCount: engine.getRegistry().listModules().length,
   }));
-
-  connection.onRequest(
-    'ansibleLens/setDocumentLinksEnabled',
-    (params?: { readonly enabled?: boolean }) => {
-      engine.setDocumentLinksEnabled(Boolean(params?.enabled));
-      return { documentLinksEnabled: engine.isDocumentLinksEnabled() };
-    },
-  );
 
   connection.onRequest('ansibleLens/updateSettings', (params?: unknown) => {
     const parsed = extractServerSettings(params);

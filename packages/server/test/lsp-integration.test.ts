@@ -11,7 +11,6 @@ import {
   DidOpenTextDocumentNotification,
   CompletionRequest,
   HoverRequest,
-  DocumentLinkRequest,
   DefinitionRequest,
   ReferencesRequest,
   CodeActionRequest,
@@ -96,7 +95,7 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
     expect(initResult.capabilities.completionProvider).toBeDefined();
     expect(initResult.capabilities.definitionProvider).toBe(true);
     expect(initResult.capabilities.referencesProvider).toBe(true);
-    expect(initResult.capabilities.documentLinkProvider).toBeDefined();
+    expect(initResult.capabilities.documentLinkProvider).toBeUndefined();
     expect(initResult.capabilities.codeActionProvider).toBeDefined();
 
     await clientConn.sendNotification(InitializedNotification.type, {});
@@ -194,23 +193,24 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
       : (protocolCompletions?.items ?? []);
     expect(compItems.some((c) => c.label === 'ansible.builtin.stat')).toBe(true);
 
-    // 5. DocumentLinks: defaults to false (zero permanent underlines), and when enabled emits ONLY module links (never parameter or return links)
-    const defaultDocLinks =
-      (await clientConn.sendRequest(DocumentLinkRequest.type, {
-        textDocument: { uri: siteUri },
-      })) ?? [];
-    expect(defaultDocLinks).toEqual([]);
+    // 5. Module Ctrl+Click (`docsCtrlClickBehavior`) resolves to `ansible-lens-docs:` by default and disables cleanly
+    const moduleDefs = await clientConn.sendRequest(DefinitionRequest.type, {
+      textDocument: { uri: siteUri },
+      position: { line: statPos.line, character: statPos.character + 5 },
+    });
+    expect(Array.isArray(moduleDefs) && moduleDefs.length === 1).toBe(true);
 
-    await clientConn.sendRequest('ansibleLens/setDocumentLinksEnabled', { enabled: true });
-    const enabledDocLinks =
-      (await clientConn.sendRequest(DocumentLinkRequest.type, {
-        textDocument: { uri: siteUri },
-      })) ?? [];
-    expect(enabledDocLinks.length).toBeGreaterThan(0);
-    expect(enabledDocLinks.some((l) => l.target?.endsWith('stat_module.html'))).toBe(true);
-    expect(enabledDocLinks.some((l) => l.target?.includes('#parameter-'))).toBe(false);
-    expect(enabledDocLinks.some((l) => l.target?.includes('#return-'))).toBe(false);
-    await clientConn.sendRequest('ansibleLens/setDocumentLinksEnabled', { enabled: false });
+    await clientConn.sendRequest('ansibleLens/updateSettings', {
+      docsCtrlClickBehavior: 'disabled',
+    });
+    const disabledDefs = await clientConn.sendRequest(DefinitionRequest.type, {
+      textDocument: { uri: siteUri },
+      position: { line: statPos.line, character: statPos.character + 5 },
+    });
+    expect(disabledDefs).toEqual([]);
+    await clientConn.sendRequest('ansibleLens/updateSettings', {
+      docsCtrlClickBehavior: 'renderedPreview',
+    });
 
     // 6. Definition for roles, handlers, template src, and variables
     const rolePos = findLineAndChar(siteText, '- webserver');

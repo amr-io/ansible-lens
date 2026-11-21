@@ -185,22 +185,27 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
 });
 
 describe('Pylance-style Ctrl+Click module docs and zero permanent underlines', () => {
-  it('returns zero document links by default', () => {
-    const service = createService();
-    const text = fs.readFileSync(ROLE_TASKS, 'utf8');
-    expect(service.getDocumentLinks(ROLE_URI, text)).toEqual([]);
-  });
-
-  it('maps a module name to an ansible-lens-docs: URI with docs.ansible.com at the top', () => {
+  it('supports docsCtrlClickBehavior: renderedPreview, openInBrowser, and disabled', () => {
     const service = createService();
     const text = fs.readFileSync(ROLE_TASKS, 'utf8');
     const lines = text.split('\n');
     const line = lines.findIndex((l) => l.includes('ansible.builtin.stat:'));
     const character = (lines[line] ?? '').indexOf('ansible.builtin.stat') + 5;
+
+    // Default (`renderedPreview`): resolves to `ansible-lens-docs:` virtual URI
+    expect(service.getDocsCtrlClickBehavior()).toBe('renderedPreview');
     const locs = service.getDefinition(ROLE_URI, { line, character }, text) as Location[];
     expect(locs).toHaveLength(1);
     expect(locs[0]?.uri).toBe(buildModuleDocsUri('ansible.builtin.stat'));
     expect(locs[0]?.uri.startsWith(`${MODULE_DOCS_SCHEME}:`)).toBe(true);
+
+    // `openInBrowser`: still resolves so the client opens docs.ansible.com in the browser
+    service.setDocsCtrlClickBehavior('openInBrowser');
+    expect(service.getDefinition(ROLE_URI, { line, character }, text)).toHaveLength(1);
+
+    // `disabled`: Ctrl+Click on module names does nothing
+    service.setDocsCtrlClickBehavior('disabled');
+    expect(service.getDefinition(ROLE_URI, { line, character }, text)).toEqual([]);
 
     const md = service.getModuleDocsMarkdown('ansible.builtin.stat');
     const firstLine = md.split('\n')[0] ?? '';
