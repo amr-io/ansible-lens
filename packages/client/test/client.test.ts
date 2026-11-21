@@ -129,6 +129,7 @@ describe('Ansible Lens VS Code Client — Smart Hybrid Activation, Grammar, Logg
       'ansibleLens.openOfficialDocs',
       'ansibleLens.refreshMetadata',
       'ansibleLens.convertFileToFqcn',
+      'ansibleLens.copyDiagnosticsInfo',
     ]);
 
     const grammarEntry = pkgJson.contributes.grammars[0];

@@ -3,6 +3,25 @@ import path from 'node:path';
 import { URI } from 'vscode-uri';
 import type { IWorkspaceFs } from '@ansible-lens/core';
 
+export const IGNORED_WORKSPACE_DIRECTORIES: ReadonlySet<string> = new Set([
+  'node_modules',
+  '.git',
+  '.venv',
+  '__pycache__',
+  'dist',
+]);
+
+function hasIgnoredDirectorySegment(filePath: string): boolean {
+  const segments = filePath.replaceAll('\\', '/').split('/');
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg = segments[i];
+    if (seg !== undefined && IGNORED_WORKSPACE_DIRECTORIES.has(seg)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Node filesystem implementation of `IWorkspaceFs` for workspace scanning and
  * cross-file intelligence.
@@ -39,7 +58,7 @@ export class NodeWorkspaceFs implements IWorkspaceFs {
       const results: string[] = [];
       const entries = fs.readdirSync(dirPath, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') {
+        if (IGNORED_WORKSPACE_DIRECTORIES.has(entry.name)) {
           continue;
         }
         const fullPath = path.join(dirPath, entry.name);
@@ -101,7 +120,7 @@ export class MemoryWorkspaceFs implements IWorkspaceFs {
     const prefix = normalized.endsWith('/') ? normalized : `${normalized}/`;
     const results: string[] = [];
     for (const key of this.files.keys()) {
-      if (key === normalized || key.startsWith(prefix)) {
+      if ((key === normalized || key.startsWith(prefix)) && !hasIgnoredDirectorySegment(key)) {
         results.push(key);
       }
     }

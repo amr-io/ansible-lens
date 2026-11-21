@@ -16,13 +16,93 @@ import type {
   LocationLink,
 } from 'vscode-languageserver/node.js';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { AnsibleLanguageService } from './language-service.js';
+import { AnsibleLanguageService, type ServerSettings } from './language-service.js';
 import { createServerLogger } from './logger.js';
 
 export interface BoundServer {
   readonly connection: Connection;
   readonly documents: TextDocuments<TextDocument>;
   readonly service: AnsibleLanguageService;
+}
+
+function extractServerSettings(raw: unknown): ServerSettings | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const obj = raw as Record<string, unknown>;
+  const root =
+    typeof obj['ansibleLens'] === 'object' && obj['ansibleLens'] !== null
+      ? (obj['ansibleLens'] as Record<string, unknown>)
+      : obj;
+
+  const docLinksObj =
+    typeof root['documentLinks'] === 'object' && root['documentLinks'] !== null
+      ? (root['documentLinks'] as Record<string, unknown>)
+      : undefined;
+  const documentLinksEnabled =
+    typeof root['documentLinksEnabled'] === 'boolean'
+      ? root['documentLinksEnabled']
+      : typeof docLinksObj?.['enabled'] === 'boolean'
+        ? docLinksObj['enabled']
+        : undefined;
+
+  const lintObj =
+    typeof root['lint'] === 'object' && root['lint'] !== null
+      ? (root['lint'] as Record<string, unknown>)
+      : undefined;
+  const metadataObj =
+    typeof root['metadata'] === 'object' && root['metadata'] !== null
+      ? (root['metadata'] as Record<string, unknown>)
+      : undefined;
+  const ansibleObj =
+    typeof root['ansible'] === 'object' && root['ansible'] !== null
+      ? (root['ansible'] as Record<string, unknown>)
+      : undefined;
+
+  const ansibleRootPaths = Array.isArray(root['ansibleRootPaths'])
+    ? (root['ansibleRootPaths'] as string[])
+    : Array.isArray(ansibleObj?.['rootPaths'])
+      ? (ansibleObj['rootPaths'] as string[])
+      : undefined;
+
+  return {
+    ...(documentLinksEnabled !== undefined ? { documentLinksEnabled } : {}),
+    ...(lintObj
+      ? {
+          lint: {
+            ...(typeof lintObj['enabled'] === 'boolean' ? { enabled: lintObj['enabled'] } : {}),
+            ...(typeof lintObj['profile'] === 'string'
+              ? {
+                  profile: lintObj['profile'] as 'minimal' | 'basic' | 'moderate' | 'production',
+                }
+              : {}),
+            ...(typeof lintObj['rules'] === 'object' && lintObj['rules'] !== null
+              ? {
+                  rules: lintObj['rules'] as Readonly<
+                    Record<string, 'error' | 'warning' | 'info' | 'off'>
+                  >,
+                }
+              : {}),
+            ...(Array.isArray(lintObj['extraVars'])
+              ? { extraVars: lintObj['extraVars'] as string[] }
+              : {}),
+          },
+        }
+      : {}),
+    ...(metadataObj
+      ? {
+          metadata: {
+            ...(typeof metadataObj['autoDownload'] === 'boolean'
+              ? { autoDownload: metadataObj['autoDownload'] }
+              : {}),
+            ...(typeof metadataObj['manifestUrl'] === 'string'
+              ? { manifestUrl: metadataObj['manifestUrl'] }
+              : {}),
+          },
+        }
+      : {}),
+    ...(ansibleRootPaths !== undefined ? { ansibleRootPaths } : {}),
+  };
 }
 
 /**
@@ -42,15 +122,57 @@ export function bindLanguageServer(
       logger,
     });
 
+  const revalidateAllOpenDocuments = (): void => {
+    for (const openDoc of documents.all()) {
+      try {
+        engine.updateDocument(openDoc.uri, openDoc.getText());
+        const diagnostics = engine.getDiagnostics(openDoc.uri, openDoc.getText());
+        connection.sendDiagnostics({ uri: openDoc.uri, diagnostics });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        engine.recordError(msg);
+      }
+    }
+  };
+
+  const triggerSilentAutoDownload = (uri: string, text: string): void => {
+    if (!engine.isAutoDownloadEnabled()) {
+      return;
+    }
+    const unloaded = engine.findUnloadedCollectionsInDocument(uri, text);
+    if (unloaded.length === 0) {
+      return;
+    }
+    void connection.sendNotification('ansibleLens/collectionDownloadProgress', {
+      state: 'downloading',
+      collections: unloaded,
+      collectionsCount: engine.getLoadedCollectionsCount(),
+    });
+    void engine.downloadCollections(unloaded).then((loaded) => {
+      void connection.sendNotification('ansibleLens/collectionDownloadProgress', {
+        state: 'idle',
+        collections: loaded,
+        collectionsCount: engine.getLoadedCollectionsCount(),
+      });
+      if (loaded.length > 0) {
+        revalidateAllOpenDocuments();
+      }
+    });
+  };
+
   const validateDocument = (doc: TextDocument): void => {
     try {
-      engine.updateDocument(doc.uri, doc.getText());
-      const diagnostics = engine.getDiagnostics(doc.uri, doc.getText());
+      const text = doc.getText();
+      engine.updateDocument(doc.uri, text);
+      const diagnostics = engine.getDiagnostics(doc.uri, text);
       connection.sendDiagnostics({ uri: doc.uri, diagnostics });
+      triggerSilentAutoDownload(doc.uri, text);
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      engine.recordError(msg);
       logger.error('Failed to validate document', {
         uri: doc.uri,
-        error: error instanceof Error ? error.message : String(error),
+        error: msg,
       });
     }
   };
@@ -66,10 +188,9 @@ export function bindLanguageServer(
       engine.addWorkspaceRoot(params.rootPath);
     }
 
-    const initOpts = params.initializationOptions as
-      { readonly documentLinksEnabled?: boolean } | undefined;
-    if (typeof initOpts?.documentLinksEnabled === 'boolean') {
-      engine.setDocumentLinksEnabled(initOpts.documentLinksEnabled);
+    const initialSettings = extractServerSettings(params.initializationOptions);
+    if (initialSettings) {
+      engine.applySettings(initialSettings);
     }
 
     engine.indexWorkspace();
@@ -92,6 +213,15 @@ export function bindLanguageServer(
         },
       },
     };
+  });
+
+  connection.onDidChangeConfiguration((change) => {
+    const parsed = extractServerSettings(change.settings);
+    if (parsed) {
+      engine.applySettings(parsed);
+      engine.indexWorkspace();
+      revalidateAllOpenDocuments();
+    }
   });
 
   documents.onDidOpen((event) => {
@@ -150,6 +280,24 @@ export function bindLanguageServer(
     },
   );
 
+  connection.onRequest('ansibleLens/updateSettings', (params?: unknown) => {
+    const parsed = extractServerSettings(params);
+    if (parsed) {
+      engine.applySettings(parsed);
+      engine.indexWorkspace();
+      revalidateAllOpenDocuments();
+    }
+    return {
+      collectionsCount: engine.getLoadedCollectionsCount(),
+      modulesCount: engine.getRegistry().listModules().length,
+    };
+  });
+
+  connection.onRequest(
+    'ansibleLens/getDiagnosticsInfo',
+    (params?: { readonly activeUri?: string }) => engine.getDiagnosticsInfo(params?.activeUri),
+  );
+
   connection.onRequest(
     'ansibleLens/getModuleDocsMarkdown',
     (params?: { readonly moduleName?: string }) => {
@@ -160,9 +308,7 @@ export function bindLanguageServer(
 
   connection.onRequest('ansibleLens/refreshMetadata', () => {
     engine.indexWorkspace();
-    for (const doc of documents.all()) {
-      validateDocument(doc);
-    }
+    revalidateAllOpenDocuments();
     return {
       collectionsCount: engine.getLoadedCollectionsCount(),
       modulesCount: engine.getRegistry().listModules().length,

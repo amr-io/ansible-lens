@@ -9,6 +9,9 @@ import type {
   ModuleMetadataSpec,
 } from '../contracts/types.js';
 
+export const DEFAULT_MANIFEST_URL =
+  'https://github.com/amr-vibe/ansible-lens/releases/download/metadata-latest/manifest.json';
+
 /**
  * Injectable remote fetcher interface for downloading `manifest.json` and `.json.gz` collection packs.
  * Enables deterministic offline testing and easy swapping of HTTP clients.
@@ -16,6 +19,28 @@ import type {
 export interface IMetadataFetcher {
   fetchText(url: string): Promise<string>;
   fetchBytes(url: string): Promise<Uint8Array>;
+}
+
+/**
+ * Default Node.js 20+ `fetch`-backed implementation of `IMetadataFetcher`.
+ */
+export class NodeMetadataFetcher implements IMetadataFetcher {
+  public async fetchText(url: string): Promise<string> {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} fetching ${url}`);
+    }
+    return res.text();
+  }
+
+  public async fetchBytes(url: string): Promise<Uint8Array> {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} fetching ${url}`);
+    }
+    const buf = await res.arrayBuffer();
+    return new Uint8Array(buf);
+  }
 }
 
 /** Result returned by `MetadataPackLoader.syncFromManifest` describing applied delta updates. */
