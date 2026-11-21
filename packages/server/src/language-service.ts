@@ -70,7 +70,12 @@ import {
   formatVariablePrecedenceHoverMarkdown,
 } from './hover-formatter.js';
 import { createServerLogger, type ServerLogger } from './logger.js';
-import { NodeWorkspaceFs, fsPathToUri, uriToFsPath } from './workspace-fs.js';
+import {
+  NodeWorkspaceFs,
+  fsPathToUri,
+  normalizeDocumentUri,
+  uriToFsPath,
+} from './workspace-fs.js';
 
 export interface InventoryInfo {
   readonly hosts: readonly string[];
@@ -138,6 +143,7 @@ export class AnsibleLanguageService {
   private readonly fs: IWorkspaceFs;
   private readonly logger: ServerLogger;
   private readonly documents = new Map<string, IndexedDocumentEntry>();
+  private readonly externalVarsFileUris = new Set<string>();
   private readonly workspaceRoots: string[] = [];
   private ansibleRootPaths: string[] = [];
   private variableGraph = new WorkspaceVariableGraph();
@@ -246,16 +252,17 @@ export class AnsibleLanguageService {
    * that have not yet been loaded or permanently failed in this session.
    */
   public findUnloadedCollectionsInDocument(uri: string, text?: string): readonly string[] {
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return [];
     }
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
     if (!heuristic.isAnsible || heuristic.kind === 'template') {
       return [];
     }
-    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
     const loaded = new Set(this.registry.listCollections());
     const unloaded = new Set<string>();
 
@@ -447,16 +454,77 @@ export class AnsibleLanguageService {
   }
 
   public updateDocument(uri: string, text: string): void {
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, text, hasCfg);
-    const ast = parseDocumentWithFallback(uri, text, heuristic.kind, this.registry);
-    this.documents.set(uri, { uri, text, ast });
-    this.indexReferencedVarsFiles(ast);
+    const canonicalUri = normalizeDocumentUri(uri);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, text, hasCfg);
+    if (!heuristic.isAnsible && this.externalVarsFileUris.has(canonicalUri)) {
+      const ast = parseDocumentWithFallback(canonicalUri, text, 'vars-files', this.registry);
+      this.documents.set(canonicalUri, { uri: canonicalUri, text, ast });
+    } else {
+      const ast = parseDocumentWithFallback(canonicalUri, text, heuristic.kind, this.registry);
+      this.documents.set(canonicalUri, { uri: canonicalUri, text, ast });
+    }
+    this.indexReferencedVarsFiles();
     this.rebuildVariableGraph();
   }
 
+  /**
+   * Called when an editor tab is closed (`onDidClose`): restores the disk-backed copy of the file
+   * into the workspace index so closing `defaults/main.yml`, `handlers/main.yml`, or `versions.yml`
+   * never breaks cross-file variables or `notify:` Go-to-Definition. Only evicts the document if
+   * it no longer exists on disk.
+   */
+  public closeDocument(uri: string): void {
+    const canonicalUri = normalizeDocumentUri(uri);
+    const fsPath = uriToFsPath(canonicalUri);
+    const diskContent = this.fs.readFile(fsPath);
+    if (diskContent === undefined) {
+      this.removeDocument(canonicalUri);
+      return;
+    }
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, diskContent, hasCfg);
+    if (heuristic.isAnsible) {
+      const ast = parseDocumentWithFallback(
+        canonicalUri,
+        diskContent,
+        heuristic.kind,
+        this.registry,
+      );
+      this.documents.set(canonicalUri, { uri: canonicalUri, text: diskContent, ast });
+    } else if (this.externalVarsFileUris.has(canonicalUri)) {
+      const ast = parseDocumentWithFallback(canonicalUri, diskContent, 'vars-files', this.registry);
+      this.documents.set(canonicalUri, { uri: canonicalUri, text: diskContent, ast });
+    } else {
+      this.documents.delete(canonicalUri);
+    }
+    this.indexReferencedVarsFiles();
+    this.rebuildVariableGraph();
+  }
+
+  /**
+   * Re-reads a file from disk after `onDidSave` or `onDidChangeWatchedFiles` and refreshes
+   * referenced `vars_files:` / `include_vars:` and the cross-file variable graph.
+   */
+  public reloadDocumentFromDisk(uri: string): void {
+    const canonicalUri = normalizeDocumentUri(uri);
+    const fsPath = uriToFsPath(canonicalUri);
+    const diskContent = this.fs.readFile(fsPath);
+    if (diskContent === undefined) {
+      this.removeDocument(canonicalUri);
+      return;
+    }
+    this.updateDocument(canonicalUri, diskContent);
+  }
+
+  /**
+   * Removes a document from the workspace index (used when a file is deleted from disk).
+   */
   public removeDocument(uri: string): void {
-    if (this.documents.delete(uri)) {
+    const canonicalUri = normalizeDocumentUri(uri);
+    this.externalVarsFileUris.delete(canonicalUri);
+    if (this.documents.delete(canonicalUri)) {
+      this.indexReferencedVarsFiles();
       this.rebuildVariableGraph();
     }
   }
@@ -506,22 +574,23 @@ export class AnsibleLanguageService {
     if (!this.lintEnabled) {
       return [];
     }
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return [];
     }
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
     if (!heuristic.isAnsible) {
       return [];
     }
 
-    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
     const lintOptions = this.buildLintOptions();
     const coreDiags = lintAnsibleDocument(ast, this.registry, lintOptions);
     const lintDiags = coreDiags.length > 0 ? coreDiags : fallbackLintDocument(ast, this.registry);
 
-    const root = this.findWorkspaceRootForUri(uri);
+    const root = this.findWorkspaceRootForUri(canonicalUri);
     const rawIntegrityDiags = root ? checkProjectIntegrity(ast, root, this.fs) : [];
     const integrityDiags = applyLintConfiguration(rawIntegrityDiags, lintOptions);
 
@@ -530,17 +599,18 @@ export class AnsibleLanguageService {
   }
 
   public getCompletions(uri: string, position: Position, text?: string): CompletionItem[] {
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return [];
     }
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
     if (!heuristic.isAnsible) {
       return [];
     }
 
-    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
     const lines = docText.split(/\r?\n/);
     const line = lines[position.line] ?? '';
     const beforeCursor = line.slice(0, position.character);
@@ -693,17 +763,18 @@ export class AnsibleLanguageService {
   }
 
   public getHover(uri: string, position: Position, text?: string): Hover | null {
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return null;
     }
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
     if (!heuristic.isAnsible) {
       return null;
     }
 
-    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
     const lines = docText.split(/\r?\n/);
     const line = lines[position.line] ?? '';
     const token = extractWordTokenAtPosition(line, position.character);
@@ -836,17 +907,18 @@ export class AnsibleLanguageService {
     if (!this.documentLinksEnabled) {
       return [];
     }
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return [];
     }
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
     if (!heuristic.isAnsible) {
       return [];
     }
 
-    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
     const links: DocumentLink[] = [];
 
     for (const task of collectAllTasks(ast)) {
@@ -881,24 +953,26 @@ export class AnsibleLanguageService {
     position: Position,
     text?: string,
   ): Location[] | LocationLink[] {
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return [];
     }
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
     if (!heuristic.isAnsible) {
       return [];
     }
 
-    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
     const lines = docText.split(/\r?\n/);
     const line = lines[position.line] ?? '';
     if (isPositionInYamlComment(line, position.character)) {
       return [];
     }
-    const root = this.findWorkspaceRootForUri(uri) ?? path.dirname(uriToFsPath(uri));
-    const projectCtx = discoverAnsibleProjectContext(uri, root, this.fs);
+    const root =
+      this.findWorkspaceRootForUri(canonicalUri) ?? path.dirname(uriToFsPath(canonicalUri));
+    const projectCtx = discoverAnsibleProjectContext(canonicalUri, root, this.fs);
 
     // 1. roles: entry -> roles/<name>/tasks/main.yml (across ansible.cfg roles_path & nested root)
     for (const play of ast.plays) {
@@ -1040,7 +1114,8 @@ export class AnsibleLanguageService {
   }
 
   public getReferences(uri: string, position: Position, text?: string): Location[] {
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return [];
     }
@@ -1079,17 +1154,18 @@ export class AnsibleLanguageService {
     if (!this.lintEnabled) {
       return [];
     }
-    const docText = text ?? this.documents.get(uri)?.text;
+    const canonicalUri = normalizeDocumentUri(uri);
+    const docText = text ?? this.documents.get(canonicalUri)?.text;
     if (docText === undefined) {
       return [];
     }
-    const hasCfg = this.hasAnsibleCfgForUri(uri);
-    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
     if (!heuristic.isAnsible) {
       return [];
     }
 
-    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
     const lintOptions = this.buildLintOptions();
     const coreDiags = lintAnsibleDocument(ast, this.registry, lintOptions);
     const lintDiags = coreDiags.length > 0 ? coreDiags : fallbackLintDocument(ast, this.registry);
@@ -1207,12 +1283,12 @@ export class AnsibleLanguageService {
   /**
    * Follows relative paths in `vars_files:` (e.g. `../../versions.yml` in `playbooks/site.yml`)
    * and `include_vars:` across indexed documents so external shared YAML files feed into
-   * role defaults, tasks, and `.j2` templates.
+   * role defaults, tasks, and `.j2` templates. Immediately evicts previously loaded external
+   * `vars_files` that are no longer referenced by any playbook/task.
    */
-  private indexReferencedVarsFiles(singleAst?: AnsibleDocumentAst): void {
-    const asts = singleAst
-      ? [singleAst]
-      : Array.from(this.documents.values(), (entry) => entry.ast);
+  private indexReferencedVarsFiles(): void {
+    const asts = Array.from(this.documents.values(), (entry) => entry.ast);
+    const activeExternalUris = new Set<string>();
 
     const loadExternalVarsFile = (
       resolvedPath: string,
@@ -1223,7 +1299,7 @@ export class AnsibleLanguageService {
       }
       const targetUri = fsPathToUri(resolvedPath);
       const existing = this.documents.get(targetUri);
-      if (existing && existing.ast.variables.length > 0) {
+      if (existing && !this.externalVarsFileUris.has(targetUri) && existing.ast.variables.length > 0) {
         return;
       }
       const content = existing?.text ?? this.fs.readFile(resolvedPath);
@@ -1232,6 +1308,8 @@ export class AnsibleLanguageService {
       }
       const parsed = parseDocumentWithFallback(targetUri, content, kind, this.registry);
       this.documents.set(targetUri, { uri: targetUri, text: content, ast: parsed });
+      this.externalVarsFileUris.add(targetUri);
+      activeExternalUris.add(targetUri);
     };
 
     for (const ast of asts) {
@@ -1298,6 +1376,33 @@ export class AnsibleLanguageService {
               }
               break;
             }
+          }
+        }
+      }
+    }
+
+    // Evict any previously loaded external vars_files that are no longer referenced
+    for (const oldExternalUri of Array.from(this.externalVarsFileUris)) {
+      if (!activeExternalUris.has(oldExternalUri)) {
+        this.externalVarsFileUris.delete(oldExternalUri);
+        const existing = this.documents.get(oldExternalUri);
+        if (existing) {
+          const hasCfg = this.hasAnsibleCfgForUri(oldExternalUri);
+          const heuristic = evaluateAnsibleHeuristic(oldExternalUri, existing.text, hasCfg);
+          if (!heuristic.isAnsible) {
+            this.documents.delete(oldExternalUri);
+          } else {
+            const reparsed = parseDocumentWithFallback(
+              oldExternalUri,
+              existing.text,
+              heuristic.kind,
+              this.registry,
+            );
+            this.documents.set(oldExternalUri, {
+              uri: oldExternalUri,
+              text: existing.text,
+              ast: reparsed,
+            });
           }
         }
       }

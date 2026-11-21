@@ -30,7 +30,11 @@ export interface ParsedAnsibleCfg {
 }
 
 function normalizeSlash(input: string): string {
-  return input.replaceAll('\\', '/');
+  const forward = input.replaceAll('\\', '/');
+  if (forward.length >= 2 && forward[1] === ':') {
+    return `${forward[0]!.toLowerCase()}${forward.slice(1)}`;
+  }
+  return forward;
 }
 
 function trimTrailingSlashes(input: string): string {
@@ -887,6 +891,28 @@ export function checkProjectIntegrity(
   for (const play of ast.plays) {
     for (const role of play.roles) {
       validateRoleRef(role.name, role.range);
+    }
+
+    for (const vf of play.varsFiles) {
+      const vfPath = vf.path.trim();
+      if (vfPath.length === 0 || containsJinja(vfPath)) {
+        continue;
+      }
+      const candidates = [
+        resolveRelativeToBase(context.documentDir, vfPath),
+        resolveRelativeToBase(context.ansibleRoot, vfPath),
+        resolveRelativeToBase(context.workspaceRoot, vfPath),
+      ];
+      const found = candidates.some((candidate) => fs.exists(candidate));
+      if (!found) {
+        diagnostics.push({
+          ruleId: 'missing-vars-file',
+          message: `Variables file '${vfPath}' referenced in 'vars_files' was not found on disk.`,
+          severity: 'warning',
+          range: vf.range,
+          quickFixes: [],
+        });
+      }
     }
 
     if (inventoryInfo.hasInventory && play.hosts !== undefined && !containsJinja(play.hosts)) {

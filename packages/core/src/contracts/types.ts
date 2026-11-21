@@ -385,6 +385,7 @@ export type LintRuleId =
   | 'missing-role-tasks'
   | 'missing-handler'
   | 'missing-src-file'
+  | 'missing-vars-file'
   | 'unknown-inventory-host'
   | 'undefined-variable'
   | 'var-naming[no-role-prefix]';
