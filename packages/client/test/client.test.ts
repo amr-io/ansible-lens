@@ -123,7 +123,11 @@ describe('Ansible Lens VS Code Client — Smart Hybrid Activation, Grammar, Logg
       };
     };
 
-    expect(pkgJson.description).toContain('Ansible® is a registered trademark of Red Hat, Inc.');
+    expect(pkgJson.description).toBe(
+      'Fast, zero-dependency Ansible IntelliSense, tooltips, and linting — no Python or WSL required.',
+    );
+    const readmeText = fs.readFileSync(path.join(CLIENT_ROOT, 'README.md'), 'utf8');
+    expect(readmeText).toContain('Ansible® is a registered trademark of Red Hat, Inc.');
     expect(pkgJson.icon).toBe('media/icon.png');
     expect(pkgJson.contributes.commands.map((c) => c.command)).toEqual([
       'ansibleLens.openOfficialDocs',
@@ -171,9 +175,9 @@ describe('ansible-lens-docs virtual document helpers', () => {
     const { evaluateJinjaBraceAutoSpace } = await import('../src/jinja-autospace.js');
     const j2Activation = shouldActivateForDocument(
       {
-        uri: 'file:///repo/roles/overleaf/templates/overleaf.rc.j2',
+        uri: 'file:///repo/roles/webapp/templates/webapp.rc.j2',
         languageId: 'plaintext',
-        text: 'PORT={{ overleaf_port }}\n',
+        text: 'PORT={{ webapp_port }}\n',
       },
       false,
     );

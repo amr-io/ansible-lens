@@ -341,13 +341,13 @@ Flags Jinja2 variables in playbooks, tasks, and `.j2` templates that are not def
 Warns when variables declared in `roles/<role>/defaults/`, `roles/<role>/vars/`, or `register:` / `set_fact:` inside `roles/<role>/tasks/` lack the `<role>_` prefix (hyphenated role names normalize to underscores; leading `_` private variables are exempt).
 
 ```yaml
-# Bad (in roles/overleaf/defaults/main.yml)
+# Bad (in roles/webapp/defaults/main.yml)
 ---
 http_port: 8080
 
-# Good (in roles/overleaf/defaults/main.yml)
+# Good (in roles/webapp/defaults/main.yml)
 ---
-overleaf_http_port: 8080
+webapp_http_port: 8080
 ```
 
 ---

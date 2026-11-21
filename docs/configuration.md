@@ -44,7 +44,7 @@ Ansible Lens automatically walks upward from each open file toward the workspace
 
 ```json
 {
-  "ansibleLens.ansible.rootPaths": ["infra/ansible", "services/overleaf/deploy"]
+  "ansibleLens.ansible.rootPaths": ["infra/ansible", "services/webapp/deploy"]
 }
 ```
 

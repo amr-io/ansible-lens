@@ -1,5 +1,0 @@
----
-overleaf_http_port: 8080
-overleaf_ufw_allowed_ports:
-  - 22
-  - 443

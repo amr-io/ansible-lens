@@ -1,8 +1,6 @@
 # Ansible Lens
 
-Zero-dependency, cross-platform, static-metadata Ansible Language Server & Linter for Visual Studio Code.
-
-> _Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc._
+Fast, zero-dependency Ansible IntelliSense, tooltips, and linting — no Python or WSL required.
 
 ## Features
 
@@ -16,3 +14,7 @@ Zero-dependency, cross-platform, static-metadata Ansible Language Server & Linte
 ## License
 
 MIT License. See [LICENSE](./LICENSE).
+
+---
+
+<sub>_Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc._</sub>
