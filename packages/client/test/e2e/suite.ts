@@ -75,6 +75,25 @@ async function withTemporaryContent<T>(
   }
 }
 
+function containsAnsibleDocsUrl(markdown: string): boolean {
+  const open = markdown.indexOf('](');
+  if (open === -1) {
+    return false;
+  }
+  const close = markdown.indexOf(')', open + 2);
+  if (close === -1) {
+    return false;
+  }
+  try {
+    return new URL(markdown.slice(open + 2, close)).hostname === 'docs.ansible.com';
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function verifyFlatFixture(workspaceRoot: string): Promise<void> {
   const sitePath = path.join(workspaceRoot, 'site.yml');
   const editor = await openInEditor(sitePath);
@@ -94,7 +113,7 @@ async function verifyFlatFixture(workspaceRoot: string): Promise<void> {
     .flatMap((h) => h.contents)
     .map((c) => (typeof c === 'string' ? c : c.value))
     .join('\n');
-  assert.ok(hoverMd.includes('https://docs.ansible.com/'), 'Hover must link to docs.ansible.com');
+  assert.ok(containsAnsibleDocsUrl(hoverMd), 'Hover must link to docs.ansible.com');
 
   // Zero permanent underlines by default.
   const links = await vscode.commands.executeCommand<vscode.DocumentLink[]>(
@@ -115,7 +134,7 @@ async function verifyFlatFixture(workspaceRoot: string): Promise<void> {
     firstDef && 'targetUri' in firstDef ? firstDef.targetUri : (firstDef as vscode.Location).uri;
   assert.equal(targetUri.scheme, 'ansible-lens-docs');
   const docsDoc = await vscode.workspace.openTextDocument(targetUri);
-  assert.ok((docsDoc.lineAt(0).text ?? '').includes('https://docs.ansible.com/'));
+  assert.ok(containsAnsibleDocsUrl(docsDoc.lineAt(0).text ?? ''));
 
   // CodeAction quick-fix converts short module name `copy:` to `ansible.builtin.copy`.
   const siteEditor = await vscode.window.showTextDocument(doc, { preview: false });
@@ -167,7 +186,7 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
   );
   assert.equal(moduleDefs?.[0]?.uri.scheme, 'ansible-lens-docs');
   const renderedDocs = await vscode.workspace.openTextDocument(moduleDefs![0]!.uri);
-  assert.ok(renderedDocs.getText().includes('https://docs.ansible.com/'));
+  assert.ok(containsAnsibleDocsUrl(renderedDocs.getText()));
 
   const regRefPos = findLineAndColumn(roleDoc, '- not overleaf_version_file.stat.isdir');
   const regRefCol = roleDoc.lineAt(regRefPos.line).text.indexOf('overleaf_version_file') + 4;
