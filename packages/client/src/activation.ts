@@ -19,6 +19,20 @@ export function shouldActivateForDocument(
   doc: DocumentCandidate,
   hasWorkspaceAnsibleCfg: boolean,
 ): AnsibleHeuristicResult {
+  const normalizedUri = doc.uri.replaceAll('\\', '/').toLowerCase();
+  if (
+    normalizedUri.endsWith('.j2') ||
+    doc.languageId === 'jinja' ||
+    doc.languageId === 'jinja2' ||
+    doc.languageId === 'jinja-html'
+  ) {
+    return {
+      isAnsible: true,
+      kind: 'template',
+      reason: 'Jinja2 template (.j2)',
+    };
+  }
+
   if (doc.languageId === 'ansible') {
     const result = evaluateAnsibleHeuristic(doc.uri, doc.text, hasWorkspaceAnsibleCfg);
     if (result.isAnsible) {

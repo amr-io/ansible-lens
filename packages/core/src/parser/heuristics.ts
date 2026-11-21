@@ -74,6 +74,9 @@ function classifyByPath(normalizedPath: string): AnsibleDocumentKind | undefined
 
   const fileName = segments[segments.length - 1] ?? '';
   const dirSegments = segments.slice(0, -1);
+  if (fileName.endsWith('.j2')) {
+    return 'template';
+  }
   const isYaml = isYamlUri(fileName);
 
   if (isYaml && segments.length >= 4 && segments[segments.length - 4] === 'roles') {

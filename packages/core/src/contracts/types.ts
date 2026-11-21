@@ -62,6 +62,9 @@ export type AnsibleDocumentKind =
   | 'group-vars'
   | 'host-vars'
   | 'inventory'
+  | 'template'
+  | 'vars-files'
+  | 'include-vars'
   | 'unknown';
 
 /** Duplicate mapping key occurrence detected in YAML CST/AST. */

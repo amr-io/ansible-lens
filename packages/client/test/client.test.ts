@@ -165,4 +165,42 @@ describe('ansible-lens-docs virtual document helpers', () => {
       'docs.ansible.com',
     );
   });
+
+  it('activates on .j2 templates and evaluates Smart {{ | }} Auto-Space on Space and Backspace', async () => {
+    const { evaluateJinjaBraceAutoSpace } = await import('../src/jinja-autospace.js');
+    const j2Activation = shouldActivateForDocument(
+      {
+        uri: 'file:///repo/roles/overleaf/templates/overleaf.rc.j2',
+        languageId: 'plaintext',
+        text: 'PORT={{ overleaf_port }}\n',
+      },
+      false,
+    );
+    expect(j2Activation.isAnsible).toBe(true);
+    expect(j2Activation.kind).toBe('template');
+
+    // Space inside `msg: "{{|}}"`: after VS Code inserts `' '` at col 8, line is `msg: "{{ }}"`
+    const expand = evaluateJinjaBraceAutoSpace('msg: "{{ }}"', 8, 0, ' ');
+    expect(expand).toEqual({
+      kind: 'space-expand',
+      replaceStartCol: 9,
+      replaceEndCol: 9,
+      newText: ' ',
+      cursorCol: 9,
+    });
+
+    // Backspace inside `msg: "{{ | }}"`: after VS Code deletes 1 char at col 8, line is `msg: "{{ }}"`
+    const collapse = evaluateJinjaBraceAutoSpace('msg: "{{ }}"', 8, 1, '');
+    expect(collapse).toEqual({
+      kind: 'backspace-collapse',
+      replaceStartCol: 8,
+      replaceEndCol: 9,
+      newText: '',
+      cursorCol: 8,
+    });
+
+    // Non-matching edits return undefined
+    expect(evaluateJinjaBraceAutoSpace('msg: "{{ foo }}"', 12, 0, ' ')).toBeUndefined();
+    expect(evaluateJinjaBraceAutoSpace('msg: "{}"', 7, 0, ' ')).toBeUndefined();
+  });
 });

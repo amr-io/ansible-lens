@@ -65,21 +65,25 @@ export class MemoryWorkspaceFs implements IWorkspaceFs {
   public constructor(initialFiles?: Readonly<Record<string, string>>) {
     if (initialFiles) {
       for (const [k, v] of Object.entries(initialFiles)) {
-        this.files.set(path.normalize(k), v);
+        this.files.set(this.keyOf(k), v);
       }
     }
   }
 
+  private keyOf(filePath: string): string {
+    return path.posix.normalize(filePath.replaceAll('\\', '/'));
+  }
+
   public setFile(filePath: string, content: string): void {
-    this.files.set(path.normalize(filePath), content);
+    this.files.set(this.keyOf(filePath), content);
   }
 
   public exists(filePath: string): boolean {
-    const normalized = path.normalize(filePath);
+    const normalized = this.keyOf(filePath);
     if (this.files.has(normalized)) {
       return true;
     }
-    const prefix = normalized.endsWith(path.sep) ? normalized : `${normalized}${path.sep}`;
+    const prefix = normalized.endsWith('/') ? normalized : `${normalized}/`;
     for (const key of this.files.keys()) {
       if (key.startsWith(prefix)) {
         return true;
@@ -89,12 +93,12 @@ export class MemoryWorkspaceFs implements IWorkspaceFs {
   }
 
   public readFile(filePath: string): string | undefined {
-    return this.files.get(path.normalize(filePath));
+    return this.files.get(this.keyOf(filePath));
   }
 
   public listFiles(dirPath: string): readonly string[] {
-    const normalized = path.normalize(dirPath);
-    const prefix = normalized.endsWith(path.sep) ? normalized : `${normalized}${path.sep}`;
+    const normalized = this.keyOf(dirPath);
+    const prefix = normalized.endsWith('/') ? normalized : `${normalized}/`;
     const results: string[] = [];
     for (const key of this.files.keys()) {
       if (key === normalized || key.startsWith(prefix)) {

@@ -137,6 +137,13 @@ export function evaluateAnsibleHeuristic(
   hasWorkspaceAnsibleCfg: boolean,
 ): AnsibleHeuristicResult {
   const normalizedPath = uriToFsPath(uri).replaceAll('\\', '/').toLowerCase();
+  if (normalizedPath.endsWith('.j2')) {
+    return {
+      isAnsible: true,
+      kind: 'template',
+      reason: 'Jinja2 template (.j2)',
+    };
+  }
   const lines = text.replaceAll('\r\n', '\n').split('\n');
 
   let hasApiVersion = false;
@@ -467,6 +474,9 @@ export function parseDocumentWithFallback(
   registry?: IMetadataRegistry,
 ): AnsibleDocumentAst {
   const coreAst = parseAnsibleDocument(uri, text, kindHint);
+  if (coreAst.kind === 'template' || kindHint === 'template') {
+    return coreAst;
+  }
   const coreHasContent =
     coreAst.plays.length > 0 ||
     coreAst.tasks.length > 0 ||
