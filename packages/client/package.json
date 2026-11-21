@@ -2,7 +2,7 @@
   "name": "ansible-lens",
   "displayName": "Ansible Lens",
   "description": "Zero-dependency, cross-platform, static-metadata Ansible Language Server & Linter. Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "amr-vibe",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -142,12 +142,16 @@
   "scripts": {
     "build": "tsc -b tsconfig.json && node scripts/bundle.mjs",
     "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.json --noEmit",
-    "package:vsix": "npm run build && npx @vscode/vsce package --no-dependencies -o ansible-lens-0.1.0.vsix",
+    "package:vsix": "npm run build && npx @vscode/vsce package --no-dependencies -o ansible-lens-0.1.1.vsix",
     "test:e2e": "npm run build && node dist/e2e/runTest.cjs"
   },
   "dependencies": {
-    "@ansible-lens/core": "0.1.0",
-    "@ansible-lens/server": "0.1.0",
+    "@ansible-lens/core": "0.1.1",
+    "@ansible-lens/server": "0.1.1",
     "vscode-languageclient": "^9.0.1"
+  },
+  "galleryBanner": {
+    "color": "#0b192c",
+    "theme": "dark"
   }
 }

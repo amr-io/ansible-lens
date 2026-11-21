@@ -1,0 +1,29 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: '🚀 Features'
+      labels:
+        - feat
+        - enhancement
+        - ux
+    - title: '🐛 Bug Fixes'
+      labels:
+        - bug
+    - title: '📚 Documentation'
+      labels:
+        - docs
+        - documentation
+    - title: '🔒 Security'
+      labels:
+        - security
+    - title: '⚙️ Maintenance'
+      labels:
+        - ci
+        - qa
+        - core
+        - lsp
+        - client
+        - linter
+        - '*'
