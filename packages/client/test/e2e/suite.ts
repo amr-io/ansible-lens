@@ -281,6 +281,10 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
   assert.ok(notifyLink && 'originSelectionRange' in notifyLink && notifyLink.originSelectionRange);
   assert.equal(notifyLink.originSelectionRange.start.character, handlerPhraseStart);
   assert.equal(notifyLink.originSelectionRange.end.character, handlerPhraseEnd);
+  assert.ok(
+    notifyLink.targetUri.fsPath.replaceAll('\\', '/').endsWith('/roles/webapp/handlers/main.yml'),
+    `Expected same-role handler jump to roles/webapp/handlers/main.yml, got ${notifyLink.targetUri.fsPath}`,
+  );
 
   const taskNamePos = findLineAndColumn(roleDoc, '- name: Check Webapp version file');
   const nameDefs = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
@@ -306,6 +310,25 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     0,
     '# comment line must never resolve to a notify handler',
   );
+
+  // 4b. `{% raw %}...{% endraw %}` produces 0 diagnostics (e.g. Docker Go-template format strings).
+  const withRawBlock = [
+    baseText,
+    '',
+    '- name: Inspect container image with raw Go template',
+    '  ansible.builtin.command:',
+    "    cmd: \"docker inspect --format '{% raw %}{{.Config.Image}}{% endraw %}' {{ webapp_http_port }}\"",
+    '  changed_when: false',
+  ].join('\n');
+  await withTemporaryContent(roleEditor, withRawBlock, async (editedDoc) => {
+    await new Promise((r) => setTimeout(r, 350));
+    const diags = vscode.languages.getDiagnostics(editedDoc.uri);
+    assert.deepEqual(
+      diags,
+      [],
+      `Expected 0 diagnostics for {% raw %}{{.Config.Image}}{% endraw %}, got: ${diags.map((d) => `${diagCode(d)}: ${d.message}`).join('; ')}`,
+    );
+  });
 
   // 5. `undefined-variable` + Levenshtein 1-click Quick-Fix ("Did you mean 'webapp_ufw_allowed_ports'?").
   const withTypoVar = [
@@ -337,6 +360,7 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
   // 6. `var-naming[no-role-prefix]` in `roles/webapp/defaults/main.yml` + 1-click Quick-Fix,
   //    plus live settings update (`ansibleLens.lint.rules` override to `"off"`).
   const defaultsPath = path.join(workspaceRoot, 'ansible/roles/webapp/defaults/main.yml');
+  const handlersPath = path.join(workspaceRoot, 'ansible/roles/webapp/handlers/main.yml');
   const defaultsEditor = await openInEditor(defaultsPath);
   const defaultsBase = defaultsEditor.document.getText().trimEnd();
   const withUnprefixedVar = `${defaultsBase}\nlisten_port: 9000\n`;
@@ -373,11 +397,39 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     }
   });
 
+  // 6b. Open & close `defaults/main.yml` and `handlers/main.yml` tabs, then verify cross-file
+  //     variable resolution and `notify:` jump STILL work from the disk-backed index.
+  await openInEditor(handlersPath);
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  await openInEditor(defaultsPath);
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  await new Promise((r) => setTimeout(r, 300));
+
+  const closedTabNotifyDefs = await vscode.commands.executeCommand<
+    (vscode.Location | vscode.LocationLink)[]
+  >(
+    'vscode.executeDefinitionProvider',
+    roleDoc.uri,
+    new vscode.Position(notifyItemPos.line, handlerPhraseStart + 10),
+  );
+  assert.equal(
+    closedTabNotifyDefs?.length,
+    1,
+    'notify: jump must still resolve after closing handlers/main.yml tab',
+  );
+
   // 7. `.j2` template completions inheriting `../../versions.yml` (`webapp_release_tag`) and role defaults,
+  //    scoped sortText ranking (role-local < shared < other role < magic),
   //    plus Smart `{{ | }}` Auto-Space on Space and Backspace.
   const templatePath = path.join(workspaceRoot, 'ansible/roles/webapp/templates/webapp.rc.j2');
   const templateEditor = await openInEditor(templatePath);
   const templateBase = templateEditor.document.getText().trimEnd();
+  assert.deepEqual(
+    vscode.languages.getDiagnostics(templateEditor.document.uri),
+    [],
+    'Open .j2 template must have 0 diagnostics even after defaults/main.yml tab was closed',
+  );
+
   const templateProbe = `${templateBase}\nTAG="{{ `;
   await withTemporaryContent(templateEditor, templateProbe, async (editedTemplate) => {
     const lastIdx = editedTemplate.lineCount - 1;
@@ -387,31 +439,72 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
       editedTemplate.uri,
       cursor,
     );
-    const labels = labelsOf(list);
-    assert.ok(
-      labels.includes('webapp_release_tag'),
-      `Expected 'webapp_release_tag' from ../../versions.yml in .j2 completions: [${labels.join(', ')}]`,
+    const items = list?.items ?? [];
+    const byLabel = new Map(
+      items.map((item) => [
+        typeof item.label === 'string' ? item.label : item.label.label,
+        item,
+      ]),
     );
-    assert.ok(labels.includes('webapp_http_port'));
+    assert.ok(byLabel.has('webapp_release_tag'), 'Expected webapp_release_tag from ../../versions.yml');
+    assert.ok(byLabel.has('webapp_http_port'), 'Expected role-local webapp_http_port');
+    assert.ok(byLabel.has('common_timezone'), 'Expected other-role common_timezone');
+    assert.ok(byLabel.has('inventory_hostname'), 'Expected magic var inventory_hostname');
+
+    const sortOf = (name: string): string => byLabel.get(name)?.sortText ?? name;
+    assert.ok(
+      sortOf('webapp_http_port') < sortOf('webapp_release_tag'),
+      `Role-local var should sort before vars_files: ${sortOf('webapp_http_port')} vs ${sortOf('webapp_release_tag')}`,
+    );
+    assert.ok(
+      sortOf('webapp_release_tag') < sortOf('common_timezone'),
+      `vars_files should sort before other role vars: ${sortOf('webapp_release_tag')} vs ${sortOf('common_timezone')}`,
+    );
+    assert.ok(
+      sortOf('common_timezone') < sortOf('inventory_hostname'),
+      `Other role vars should sort before magic vars: ${sortOf('common_timezone')} vs ${sortOf('inventory_hostname')}`,
+    );
+  });
+
+  // 7b. Live cross-file revalidation: renaming a variable in `versions.yml` immediately updates
+  //     diagnostics in the already-open `.j2` template without editing the template.
+  const versionsPath = path.join(workspaceRoot, 'versions.yml');
+  const versionsEditor = await openInEditor(versionsPath);
+  const versionsBase = versionsEditor.document.getText();
+  const renamedVersions = versionsBase.replace('webapp_release_tag', 'webapp_release_version');
+  await withTemporaryContent(versionsEditor, renamedVersions, async () => {
+    const templateUndef = await waitUntil(
+      'live undefined-variable diagnostic on open .j2 template after renaming versions.yml var',
+      async () => {
+        return vscode.languages
+          .getDiagnostics(templateEditor.document.uri)
+          .find((d) => diagCode(d) === 'undefined-variable' && d.message.includes('webapp_release_tag'));
+      },
+    );
+    assert.ok(templateUndef);
+  });
+  await waitUntil('open .j2 template diagnostics clear after restoring versions.yml', async () => {
+    return vscode.languages.getDiagnostics(templateEditor.document.uri).length === 0 ? true : undefined;
   });
 
   // Smart `{{ | }}` Auto-Space in `.j2` template: insert `' '` inside `{{}}` -> expands to `{{  }}` with cursor centered.
+  const activeTemplateEditor = await openInEditor(templatePath);
   const autoSpaceInit = `${templateBase}\nAUTO={{}}`;
-  await withTemporaryContent(templateEditor, autoSpaceInit, async (editedTemplate) => {
+  await withTemporaryContent(activeTemplateEditor, autoSpaceInit, async (editedTemplate) => {
     const lastIdx = editedTemplate.lineCount - 1;
     const braceCenter = new vscode.Position(lastIdx, 'AUTO={{'.length);
-    await templateEditor.edit((eb) => eb.insert(braceCenter, ' '));
+    await activeTemplateEditor.edit((eb) => eb.insert(braceCenter, ' '));
     await waitUntil('auto-space expansion to {{  }}', async () => {
       return editedTemplate.lineAt(lastIdx).text === 'AUTO={{  }}' ? true : undefined;
     });
-    assert.equal(templateEditor.selection.active.character, 'AUTO={{ '.length);
+    assert.equal(activeTemplateEditor.selection.active.character, 'AUTO={{ '.length);
 
     // Simulate Backspace deleting the leading space inside `{{ | }}` -> collapses both spaces back to `{{}}`.
     const deleteRange = new vscode.Range(
       new vscode.Position(lastIdx, 'AUTO={{'.length),
       new vscode.Position(lastIdx, 'AUTO={{ '.length),
     );
-    await templateEditor.edit((eb) => eb.delete(deleteRange));
+    await activeTemplateEditor.edit((eb) => eb.delete(deleteRange));
     await waitUntil('auto-space collapse to {{}} on Backspace', async () => {
       return editedTemplate.lineAt(lastIdx).text === 'AUTO={{}}' ? true : undefined;
     });
@@ -432,6 +525,30 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     [],
     'Expected 0 missing-role diagnostics when roles exist under ansible/roles',
   );
+
+  // 8b. Typo in `vars_files: ../../version.yml` emits `missing-vars-file` AND evicts old variables
+  //     from the open `.j2` template immediately.
+  const brokenVarsFilesSite = siteEditor.document
+    .getText()
+    .replace('../../versions.yml', '../../version.yml');
+  await withTemporaryContent(siteEditor, brokenVarsFilesSite, async (editedSite) => {
+    const missingVarsDiag = await waitUntil('missing-vars-file diagnostic on site.yml', async () => {
+      return vscode.languages
+        .getDiagnostics(editedSite.uri)
+        .find((d) => diagCode(d) === 'missing-vars-file');
+    });
+    assert.ok(missingVarsDiag.message.includes('../../version.yml'));
+
+    const evictedTemplateDiag = await waitUntil(
+      'evicted webapp_release_tag triggers undefined-variable in open .j2 template',
+      async () => {
+        return vscode.languages
+          .getDiagnostics(templateEditor.document.uri)
+          .find((d) => diagCode(d) === 'undefined-variable' && d.message.includes('webapp_release_tag'));
+      },
+    );
+    assert.ok(evictedTemplateDiag);
+  });
 
   // Add a genuinely missing role and verify exactly 1 missing-role diagnostic fires.
   const withMissingRole = `${siteEditor.document.getText().trimEnd()}\n    - truly_missing_role\n`;
