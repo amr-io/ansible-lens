@@ -212,4 +212,60 @@ describe('.j2 template intelligence and vars_files / include_vars relative path 
     );
     expect(hover).not.toBeNull();
   });
+
+  it('ranks variable completions with scoped sortText (0_ role-local, 1_ shared, 2_ other roles, 3_ magic) and excludes other roles private register vars', () => {
+    const fs = new MemoryWorkspaceFs({
+      '/repo/ansible/ansible.cfg': '[defaults]\nroles_path = ./roles\n',
+      [versionsPath]: '---\nwebapp_release_tag: "5.1.2"\n',
+      [groupVarsPath]: '---\nglobal_domain: "webapp.example.com"\n',
+      [sitePath]: [
+        '---',
+        '- name: Deploy',
+        '  hosts: all',
+        '  vars_files:',
+        '    - ../../versions.yml',
+        '  roles:',
+        '    - webapp',
+        '    - security',
+      ].join('\n'),
+      [roleDefaultsPath]: '---\nwebapp_http_port: 8080\n',
+      [roleTasksPath]: [
+        '---',
+        '- name: Check webapp version',
+        '  ansible.builtin.stat:',
+        '    path: /opt/webapp/VERSION',
+        '  register: webapp_version_file',
+      ].join('\n'),
+      '/repo/ansible/roles/security/defaults/main.yml': '---\nsecurity_ssh_port: 22\n',
+      '/repo/ansible/roles/security/tasks/main.yml': [
+        '---',
+        '- name: Check ssh config',
+        '  ansible.builtin.stat:',
+        '    path: /etc/ssh/sshd_config',
+        '  register: security_private_stat',
+      ].join('\n'),
+      [templatePath]: 'PORT={{ ',
+    });
+    const service = new AnsibleLanguageService({ fs, workspaceRoots: ['/repo'] });
+    service.indexWorkspace();
+
+    const items = service.getCompletions(templateUri, { line: 0, character: 'PORT={{ '.length }, 'PORT={{ ');
+    const byLabel = new Map(items.map((item) => [item.label, item]));
+
+    expect(byLabel.get('webapp_http_port')?.sortText).toBe('0_webapp_http_port');
+    expect(byLabel.get('webapp_version_file')?.sortText).toBe('0_webapp_version_file');
+    expect(byLabel.get('webapp_release_tag')?.sortText).toBe('1_webapp_release_tag');
+    expect(byLabel.get('global_domain')?.sortText).toBe('1_global_domain');
+    expect(byLabel.get('security_ssh_port')?.sortText).toBe('2_security_ssh_port');
+    expect(byLabel.get('inventory_hostname')?.sortText).toBe('3_inventory_hostname');
+
+    // Other role's private `register:` variable must be excluded from webapp template completions
+    expect(byLabel.has('security_private_stat')).toBe(false);
+
+    // Verify array order matches bucket ranking
+    const labels = items.map((i) => i.label);
+    expect(labels.indexOf('webapp_http_port')).toBeLessThan(labels.indexOf('webapp_release_tag'));
+    expect(labels.indexOf('webapp_release_tag')).toBeLessThan(labels.indexOf('security_ssh_port'));
+    expect(labels.indexOf('security_ssh_port')).toBeLessThan(labels.indexOf('inventory_hostname'));
+  });
 });

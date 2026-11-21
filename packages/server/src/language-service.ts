@@ -1050,7 +1050,7 @@ export class AnsibleLanguageService {
         task.notify,
       );
       if (notifyMatch) {
-        const locs = this.findHandlerLocations(notifyMatch.handlerName);
+        const locs = this.findHandlerLocations(notifyMatch.handlerName, canonicalUri);
         if (locs.length > 0) {
           return locs.map((loc): LocationLink => ({
             originSelectionRange: notifyMatch.originSelectionRange,
@@ -1547,13 +1547,50 @@ export class AnsibleLanguageService {
   private completeVariablesAndMagic(ast: AnsibleDocumentAst): CompletionItem[] {
     const items: CompletionItem[] = [];
     const seen = new Set<string>();
+    const currentRole = extractRoleNameFromUri(ast.uri);
 
     for (const resolved of this.variableGraph.listVariables()) {
+      const win = resolved.winningDefinition;
+      const winRole = extractRoleNameFromUri(win.uri);
+
+      // Exclude other roles' private `register:` variables so they don't bloat templates
+      if (win.sourceKind === 'register' && winRole !== undefined && winRole !== currentRole) {
+        continue;
+      }
+
+      const belongsToCurrentRole =
+        (currentRole !== undefined &&
+          resolved.allDefinitions.some((d) => extractRoleNameFromUri(d.uri) === currentRole)) ||
+        win.uri === ast.uri;
+
+      const isSharedScope = resolved.allDefinitions.some(
+        (d) =>
+          d.sourceKind === 'play-vars-files' ||
+          d.sourceKind === 'include-vars' ||
+          d.sourceKind === 'playbook-group-vars-all' ||
+          d.sourceKind === 'playbook-group-vars' ||
+          d.sourceKind === 'inventory-group-vars' ||
+          d.sourceKind === 'inventory-host-vars' ||
+          d.sourceKind === 'playbook-host-vars' ||
+          d.sourceKind === 'inventory-file' ||
+          d.sourceKind === 'play-vars' ||
+          d.sourceKind === 'play-vars-prompt' ||
+          d.sourceKind === 'extra-vars',
+      );
+
+      let bucket: '0_' | '1_' | '2_' = '2_';
+      if (belongsToCurrentRole) {
+        bucket = '0_';
+      } else if (isSharedScope) {
+        bucket = '1_';
+      }
+
       seen.add(resolved.name);
       items.push({
         label: resolved.name,
+        sortText: `${bucket}${resolved.name}`,
         kind: CompletionItemKind.Variable,
-        detail: `Rank ${resolved.winningDefinition.precedenceLevel} (${resolved.winningDefinition.precedenceLabel})`,
+        detail: `Rank ${win.precedenceLevel} (${win.precedenceLabel})`,
         documentation: {
           kind: MarkupKind.Markdown,
           value: formatVariablePrecedenceHoverMarkdown(resolved),
@@ -1565,9 +1602,16 @@ export class AnsibleLanguageService {
       if (seen.has(name)) {
         continue;
       }
+      const regRole = extractRoleNameFromUri(reg.uri);
+      // Exclude other roles' private `register:` variables
+      if (regRole !== undefined && regRole !== currentRole) {
+        continue;
+      }
       seen.add(name);
+      const bucket = reg.uri === ast.uri || (currentRole !== undefined && regRole === currentRole) ? '0_' : '1_';
       items.push({
         label: name,
+        sortText: `${bucket}${name}`,
         kind: CompletionItemKind.Variable,
         detail: `Registered from ${reg.moduleFqcn}`,
         documentation: {
@@ -1581,14 +1625,17 @@ export class AnsibleLanguageService {
       if (seen.has(magic.name)) {
         continue;
       }
+      seen.add(magic.name);
       items.push({
         label: magic.name,
+        sortText: `3_${magic.name}`,
         kind: CompletionItemKind.Variable,
         detail: `Magic variable (${magic.signature})`,
         documentation: { kind: MarkupKind.Markdown, value: magic.description },
       });
     }
 
+    items.sort((a, b) => (a.sortText ?? a.label).localeCompare(b.sortText ?? b.label));
     return items;
   }
 
@@ -1671,7 +1718,7 @@ export class AnsibleLanguageService {
     return preceding ? this.registry.getModule(preceding.moduleName) : undefined;
   }
 
-  private findHandlerLocations(handlerName: string): Location[] {
+  private findHandlerLocations(handlerName: string, fromUri?: string): Location[] {
     const locs: Location[] = [];
     for (const [docUri, entry] of this.documents.entries()) {
       const handlers = [...entry.ast.handlers, ...entry.ast.plays.flatMap((p) => p.handlers)];
@@ -1682,6 +1729,21 @@ export class AnsibleLanguageService {
             range: toLspRange(h.nameRange ?? h.range),
           });
         }
+      }
+    }
+    if (locs.length <= 1 || !fromUri) {
+      return locs;
+    }
+    const canonicalFrom = normalizeDocumentUri(fromUri);
+    const sameDoc = locs.filter((l) => l.uri === canonicalFrom);
+    if (sameDoc.length > 0) {
+      return [sameDoc[0]!];
+    }
+    const currentRole = extractRoleNameFromUri(canonicalFrom);
+    if (currentRole !== undefined) {
+      const sameRole = locs.filter((l) => extractRoleNameFromUri(l.uri) === currentRole);
+      if (sameRole.length > 0) {
+        return [sameRole[0]!];
       }
     }
     return locs;
@@ -1828,6 +1890,18 @@ export class AnsibleLanguageService {
     }
     return this.ansibleRootPaths[0] ?? this.workspaceRoots[0];
   }
+}
+
+/** Extracts `<role>` when `uri` resides inside `roles/<role>/...` (tasks, handlers, defaults, vars, templates). */
+function extractRoleNameFromUri(uri: string): string | undefined {
+  const fsPath = uriToFsPath(uri).replaceAll('\\', '/');
+  const segments = fsPath.split('/').filter((s) => s.length > 0);
+  const rolesIdx = segments.lastIndexOf('roles');
+  if (rolesIdx === -1 || rolesIdx + 2 >= segments.length) {
+    return undefined;
+  }
+  const roleName = segments[rolesIdx + 1];
+  return roleName && roleName.length > 0 ? roleName : undefined;
 }
 
 /** Extracts `<namespace>.<collection>` from a valid 3+ segment FQCN without regex. */
