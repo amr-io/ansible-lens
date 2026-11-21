@@ -49,3 +49,56 @@ export function formatOfflineDocsMarkdown(moduleName: string): string {
     'The Ansible Lens language server is not available yet; open the official documentation above.',
   ].join('\n');
 }
+
+/** Minimal structural representation of a VS Code `Uri` (zero `vscode` runtime imports). */
+export interface DocsUriLike {
+  readonly scheme: string;
+  readonly path: string;
+}
+
+function isDocsUriLike(value: unknown): value is DocsUriLike {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  return typeof obj['scheme'] === 'string' && typeof obj['path'] === 'string';
+}
+
+/**
+ * Extracts the first `ansible-lens-docs:` target URI from a VS Code definition result
+ * (`Location`, `Location[]`, or `LocationLink[]`). Returns `undefined` when the definition
+ * points to a normal workspace file or is empty.
+ */
+export function extractModuleDocsTargetUri(result: unknown): DocsUriLike | undefined {
+  if (result === null || result === undefined) {
+    return undefined;
+  }
+  const items: readonly unknown[] = Array.isArray(result) ? result : [result];
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null) {
+      continue;
+    }
+    const obj = item as Record<string, unknown>;
+    const candidate = 'targetUri' in obj ? obj['targetUri'] : obj['uri'];
+    if (isDocsUriLike(candidate) && candidate.scheme === MODULE_DOCS_SCHEME) {
+      return { scheme: candidate.scheme, path: candidate.path };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolves the official `docs.ansible.com` URL when a definition result targets an
+ * `ansible-lens-docs:` virtual document, or returns `undefined` for non-docs targets.
+ */
+export function resolveOpenInBrowserUrl(result: unknown): string | undefined {
+  const targetUri = extractModuleDocsTargetUri(result);
+  if (!targetUri) {
+    return undefined;
+  }
+  const moduleName = parseModuleNameFromDocsPath(targetUri.path);
+  if (moduleName.length === 0) {
+    return undefined;
+  }
+  return buildOfflineDocUrl(moduleName);
+}

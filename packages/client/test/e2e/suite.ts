@@ -136,6 +136,39 @@ async function verifyFlatFixture(workspaceRoot: string): Promise<void> {
   const docsDoc = await vscode.workspace.openTextDocument(targetUri);
   assert.ok(containsAnsibleDocsUrl(docsDoc.lineAt(0).text ?? ''));
 
+  // openInBrowser mode intercepts ansible-lens-docs: in middleware and opens zero .md tabs.
+  const cfg = vscode.workspace.getConfiguration('ansibleLens');
+  await cfg.update('docs.ctrlClickBehavior', 'openInBrowser', vscode.ConfigurationTarget.Global);
+  try {
+    const activeUriBefore = vscode.window.activeTextEditor?.document.uri.toString();
+    const openInBrowserDefs = await vscode.commands.executeCommand<
+      (vscode.Location | vscode.LocationLink)[]
+    >('vscode.executeDefinitionProvider', doc.uri, statPos);
+    assert.equal(
+      openInBrowserDefs?.length ?? 0,
+      0,
+      'openInBrowser middleware must return undefined/empty so VS Code never opens an unrendered .md tab',
+    );
+    const docsTabs = vscode.window.tabGroups.all.flatMap((group) =>
+      group.tabs.filter(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'ansible-lens-docs',
+      ),
+    );
+    assert.equal(
+      docsTabs.length,
+      0,
+      'Zero ansible-lens-docs tabs may be opened in openInBrowser mode',
+    );
+    assert.equal(
+      vscode.window.activeTextEditor?.document.uri.toString(),
+      activeUriBefore,
+      'Active editor must remain unchanged in openInBrowser mode',
+    );
+  } finally {
+    await cfg.update('docs.ctrlClickBehavior', undefined, vscode.ConfigurationTarget.Global);
+  }
+
   // CodeAction quick-fix converts short module name `copy:` to `ansible.builtin.copy`.
   const siteEditor = await vscode.window.showTextDocument(doc, { preview: false });
   const withShortCopy = doc.getText().replace('ansible.builtin.copy:', 'copy:');
@@ -317,7 +350,7 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     '',
     '- name: Inspect container image with raw Go template',
     '  ansible.builtin.command:',
-    "    cmd: \"docker inspect --format '{% raw %}{{.Config.Image}}{% endraw %}' {{ webapp_http_port }}\"",
+    '    cmd: "docker inspect --format \'{% raw %}{{.Config.Image}}{% endraw %}\' {{ webapp_http_port }}"',
     '  changed_when: false',
   ].join('\n');
   await withTemporaryContent(roleEditor, withRawBlock, async (editedDoc) => {
@@ -354,6 +387,29 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     assert.ok(
       actions?.some((a) => a.title.includes("Did you mean 'webapp_ufw_allowed_ports'?")),
       'Expected Levenshtein Quick-Fix for undefined-variable',
+    );
+  });
+
+  // 5b. Rapid burst of edits on a non-shared task file settles cleanly after debounce.
+  await withTemporaryContent(roleEditor, baseText, async (editedDoc) => {
+    const burstSteps = [
+      `${baseText}\n\n- name: Burst\n  ansible.builtin.debug:\n    msg: "{{ typo_v1 }}"\n`,
+      `${baseText}\n\n- name: Burst\n  ansible.builtin.debug:\n    msg: "{{ typo_v2 }}"\n`,
+      `${baseText}\n\n- name: Burst\n  ansible.builtin.debug:\n    msg: "{{ typo_v3 }}"\n`,
+      `${baseText}\n\n- name: Burst\n  ansible.builtin.debug:\n    msg: "{{ webapp_http_port }}"\n`,
+    ];
+    for (const stepText of burstSteps) {
+      const fullRange = new vscode.Range(
+        editedDoc.positionAt(0),
+        editedDoc.positionAt(editedDoc.getText().length),
+      );
+      await roleEditor.edit((eb) => eb.replace(fullRange, stepText));
+    }
+    await new Promise((r) => setTimeout(r, 350));
+    assert.deepEqual(
+      vscode.languages.getDiagnostics(editedDoc.uri),
+      [],
+      'Rapid edits ending on valid variable must settle to 0 diagnostics after debounce',
     );
   });
 
@@ -441,12 +497,12 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     );
     const items = list?.items ?? [];
     const byLabel = new Map(
-      items.map((item) => [
-        typeof item.label === 'string' ? item.label : item.label.label,
-        item,
-      ]),
+      items.map((item) => [typeof item.label === 'string' ? item.label : item.label.label, item]),
     );
-    assert.ok(byLabel.has('webapp_release_tag'), 'Expected webapp_release_tag from ../../versions.yml');
+    assert.ok(
+      byLabel.has('webapp_release_tag'),
+      'Expected webapp_release_tag from ../../versions.yml',
+    );
     assert.ok(byLabel.has('webapp_http_port'), 'Expected role-local webapp_http_port');
     assert.ok(byLabel.has('common_timezone'), 'Expected other-role common_timezone');
     assert.ok(byLabel.has('inventory_hostname'), 'Expected magic var inventory_hostname');
@@ -478,13 +534,17 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
       async () => {
         return vscode.languages
           .getDiagnostics(templateEditor.document.uri)
-          .find((d) => diagCode(d) === 'undefined-variable' && d.message.includes('webapp_release_tag'));
+          .find(
+            (d) => diagCode(d) === 'undefined-variable' && d.message.includes('webapp_release_tag'),
+          );
       },
     );
     assert.ok(templateUndef);
   });
   await waitUntil('open .j2 template diagnostics clear after restoring versions.yml', async () => {
-    return vscode.languages.getDiagnostics(templateEditor.document.uri).length === 0 ? true : undefined;
+    return vscode.languages.getDiagnostics(templateEditor.document.uri).length === 0
+      ? true
+      : undefined;
   });
 
   // Smart `{{ | }}` Auto-Space in `.j2` template: insert `' '` inside `{{}}` -> expands to `{{  }}` with cursor centered.
@@ -532,11 +592,14 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
     .getText()
     .replace('../../versions.yml', '../../version.yml');
   await withTemporaryContent(siteEditor, brokenVarsFilesSite, async (editedSite) => {
-    const missingVarsDiag = await waitUntil('missing-vars-file diagnostic on site.yml', async () => {
-      return vscode.languages
-        .getDiagnostics(editedSite.uri)
-        .find((d) => diagCode(d) === 'missing-vars-file');
-    });
+    const missingVarsDiag = await waitUntil(
+      'missing-vars-file diagnostic on site.yml',
+      async () => {
+        return vscode.languages
+          .getDiagnostics(editedSite.uri)
+          .find((d) => diagCode(d) === 'missing-vars-file');
+      },
+    );
     assert.ok(missingVarsDiag.message.includes('../../version.yml'));
 
     const evictedTemplateDiag = await waitUntil(
@@ -544,7 +607,9 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
       async () => {
         return vscode.languages
           .getDiagnostics(templateEditor.document.uri)
-          .find((d) => diagCode(d) === 'undefined-variable' && d.message.includes('webapp_release_tag'));
+          .find(
+            (d) => diagCode(d) === 'undefined-variable' && d.message.includes('webapp_release_tag'),
+          );
       },
     );
     assert.ok(evictedTemplateDiag);

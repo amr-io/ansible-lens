@@ -171,6 +171,58 @@ describe('ansible-lens-docs virtual document helpers', () => {
     );
   });
 
+  it('extracts ansible-lens-docs URIs and resolves official docs.ansible.com URLs across Location, Location[], and LocationLink[]', async () => {
+    const { extractModuleDocsTargetUri, resolveOpenInBrowserUrl } =
+      await import('../src/docs-uri.js');
+
+    const singleLocation = {
+      uri: { scheme: 'ansible-lens-docs', path: '/ansible.builtin.copy.md' },
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+    };
+    expect(extractModuleDocsTargetUri(singleLocation)).toEqual({
+      scheme: 'ansible-lens-docs',
+      path: '/ansible.builtin.copy.md',
+    });
+    expect(resolveOpenInBrowserUrl(singleLocation)).toBe(
+      'https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html',
+    );
+
+    const locationArray = [
+      { uri: { scheme: 'file', path: '/workspace/site.yml' } },
+      { uri: { scheme: 'ansible-lens-docs', path: '/community.general.ufw.md' } },
+    ];
+    expect(resolveOpenInBrowserUrl(locationArray)).toBe(
+      'https://docs.ansible.com/ansible/latest/collections/community/general/ufw_module.html',
+    );
+
+    const locationLinks = [
+      {
+        targetUri: { scheme: 'ansible-lens-docs', path: '/ansible.posix.sysctl.md' },
+        targetRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      },
+    ];
+    expect(extractModuleDocsTargetUri(locationLinks)).toEqual({
+      scheme: 'ansible-lens-docs',
+      path: '/ansible.posix.sysctl.md',
+    });
+    expect(resolveOpenInBrowserUrl(locationLinks)).toBe(
+      'https://docs.ansible.com/ansible/latest/collections/ansible/posix/sysctl_module.html',
+    );
+
+    // Non-docs file:// targets must pass through untouched (return undefined)
+    expect(
+      resolveOpenInBrowserUrl([{ uri: { scheme: 'file', path: '/workspace/handlers/main.yml' } }]),
+    ).toBeUndefined();
+    expect(
+      resolveOpenInBrowserUrl([
+        { targetUri: { scheme: 'file', path: '/workspace/defaults/main.yml' } },
+      ]),
+    ).toBeUndefined();
+    expect(resolveOpenInBrowserUrl(undefined)).toBeUndefined();
+    expect(resolveOpenInBrowserUrl(null)).toBeUndefined();
+    expect(resolveOpenInBrowserUrl([])).toBeUndefined();
+  });
+
   it('activates on .j2 templates and evaluates Smart {{ | }} Auto-Space on Space and Backspace', async () => {
     const { evaluateJinjaBraceAutoSpace } = await import('../src/jinja-autospace.js');
     const j2Activation = shouldActivateForDocument(
