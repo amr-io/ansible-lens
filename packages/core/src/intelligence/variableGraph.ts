@@ -98,21 +98,33 @@ export interface ClassifiedVariableSource {
 }
 
 function normalizePathForClassification(uri: string): string {
-  return uri.replace(/\\/g, '/').toLowerCase();
+  return uri.replaceAll('\\', '/').toLowerCase();
+}
+
+function isYamlFileName(name: string): boolean {
+  return name.endsWith('.yml') || name.endsWith('.yaml');
 }
 
 function isInventoryScopedPath(normalizedPath: string): boolean {
-  return (
-    /(?:^|\/)inventories\/[^/]+\//.test(normalizedPath) ||
-    /(?:^|\/)inventory\/[^/]+\//.test(normalizedPath)
-  );
+  const segments = normalizedPath.split('/').filter((s) => s.length > 0);
+  const invIdx = Math.max(segments.indexOf('inventory'), segments.indexOf('inventories'));
+  return invIdx !== -1 && invIdx < segments.length - 2;
 }
 
 function isGroupVarsAll(normalizedPath: string): boolean {
-  return (
-    /(?:^|\/)group_vars\/all(?:\.ya?ml)?$/.test(normalizedPath) ||
-    /(?:^|\/)group_vars\/all\/[^/]+$/.test(normalizedPath)
-  );
+  const segments = normalizedPath.split('/').filter((s) => s.length > 0);
+  const gIdx = segments.lastIndexOf('group_vars');
+  if (gIdx === -1 || gIdx + 1 >= segments.length) {
+    return false;
+  }
+  const next = segments[gIdx + 1] ?? '';
+  if (gIdx + 2 === segments.length) {
+    return next === 'all' || next === 'all.yml' || next === 'all.yaml';
+  }
+  if (gIdx + 3 === segments.length) {
+    return next === 'all';
+  }
+  return false;
 }
 
 const DEFAULT_FALLBACK_RANGE: SourceRange = {
@@ -154,9 +166,14 @@ export class WorkspaceVariableGraph {
     docKind: AnsibleDocumentKind,
   ): ClassifiedVariableSource {
     const normalized = normalizePathForClassification(uri);
+    const segments = normalized.split('/').filter((s) => s.length > 0);
+    const fileName = segments[segments.length - 1] ?? '';
+    const parentDir = segments.length >= 2 ? (segments[segments.length - 2] ?? '') : '';
+    const dirSegments = segments.slice(0, -1);
+    const isYaml = isYamlFileName(fileName);
     const inInventoryDir = isInventoryScopedPath(normalized);
 
-    if (docKind === 'role-defaults' || /(?:^|\/)defaults\/[^/]+\.ya?ml$/.test(normalized)) {
+    if (docKind === 'role-defaults' || (isYaml && parentDir === 'defaults')) {
       const spec = PRECEDENCE_TABLE['role-defaults'];
       return {
         sourceKind: 'role-defaults',
@@ -165,7 +182,13 @@ export class WorkspaceVariableGraph {
       };
     }
 
-    if (docKind === 'role-vars' || /(?:^|\/)roles\/[^/]+\/vars\/[^/]+\.ya?ml$/.test(normalized)) {
+    if (
+      docKind === 'role-vars' ||
+      (isYaml &&
+        segments.length >= 4 &&
+        segments[segments.length - 4] === 'roles' &&
+        parentDir === 'vars')
+    ) {
       const spec = PRECEDENCE_TABLE['role-vars'];
       return {
         sourceKind: 'role-vars',
@@ -174,7 +197,7 @@ export class WorkspaceVariableGraph {
       };
     }
 
-    if (docKind === 'group-vars' || /(?:^|\/)group_vars\//.test(normalized)) {
+    if (docKind === 'group-vars' || dirSegments.includes('group_vars')) {
       if (isGroupVarsAll(normalized)) {
         if (inInventoryDir) {
           return {
@@ -203,7 +226,7 @@ export class WorkspaceVariableGraph {
       };
     }
 
-    if (docKind === 'host-vars' || /(?:^|\/)host_vars\//.test(normalized)) {
+    if (docKind === 'host-vars' || dirSegments.includes('host_vars')) {
       if (inInventoryDir) {
         return {
           sourceKind: 'inventory-host-vars',
@@ -226,7 +249,7 @@ export class WorkspaceVariableGraph {
       };
     }
 
-    if (/(?:^|\/)vars\/[^/]+\.ya?ml$/.test(normalized)) {
+    if (isYaml && parentDir === 'vars') {
       const spec = PRECEDENCE_TABLE['play-vars-files'];
       return {
         sourceKind: 'play-vars-files',

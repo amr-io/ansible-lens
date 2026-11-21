@@ -45,3 +45,26 @@ jobs:
         uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           category: '/language:${{ matrix.language }}'
+          output: ../results
+
+      - name: Verify zero CodeQL alerts in SARIF
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const files = fs.readdirSync("../results").filter((f) => f.endsWith(".sarif"));
+            let total = 0;
+            for (const file of files) {
+              const sarif = JSON.parse(fs.readFileSync(path.join("../results", file), "utf8"));
+              const results = (sarif.runs || []).flatMap((r) => r.results || []);
+              total += results.length;
+              for (const res of results) {
+                const loc = res.locations?.[0]?.physicalLocation;
+                console.log(`- [${res.ruleId}] ${loc?.artifactLocation?.uri}:${loc?.region?.startLine} ${res.message?.text}`);
+              }
+            }
+            console.log(`CodeQL SARIF findings count: ${total}`);
+            if (total > 0) {
+              process.exit(1);
+            }
+          '

@@ -235,15 +235,14 @@ export class AnsibleLanguageService {
     const beforeCursor = line.slice(0, position.character);
 
     // 1. Inventory host/group names after `hosts:`
-    if (/^\s*(?:-\s*)?hosts\s*:\s*[^\s]*$/.test(beforeCursor)) {
+    if (isHostsCompletionPrefix(beforeCursor)) {
       return this.completeInventoryTargets(uri);
     }
 
     // 2. Dotted access on `ansible_facts.` or registered variables (`my_res.`)
-    const dottedMatch = /([A-Za-z_][A-Za-z0-9_]*)\.(?:([A-Za-z0-9_.]*))?$/.exec(beforeCursor);
+    const dottedMatch = extractTrailingDottedAccess(beforeCursor);
     if (dottedMatch && isInsideExpressionOrCondition(beforeCursor, line)) {
-      const rootVar = dottedMatch[1] ?? '';
-      const subPath = dottedMatch[2] ?? '';
+      const { rootVar, subPath } = dottedMatch;
       if (rootVar === 'ansible_facts') {
         return ANSIBLE_FACTS_FIELDS.map((f) => ({
           label: f.name,
@@ -260,10 +259,7 @@ export class AnsibleLanguageService {
     }
 
     // 3. Jinja2 filter completion after `|`
-    if (
-      /\{\{[^}]*\|\s*[A-Za-z0-9_]*$/.test(beforeCursor) ||
-      /^\s*when\s*:.*\|\s*[A-Za-z0-9_]*$/.test(beforeCursor)
-    ) {
+    if (isFilterCompletionPrefix(beforeCursor)) {
       return JINJA_FILTERS.map((f) => ({
         label: f.name,
         kind: CompletionItemKind.Function,
@@ -288,9 +284,8 @@ export class AnsibleLanguageService {
     }
 
     // 6. Module parameter value choices (`state: `)
-    const paramValueMatch = /^\s*([A-Za-z0-9_.-]+)\s*:\s*([A-Za-z0-9_-]*)$/.exec(beforeCursor);
-    if (paramValueMatch) {
-      const paramName = paramValueMatch[1] ?? '';
+    const paramName = extractParamValuePrefixKey(beforeCursor);
+    if (paramName !== undefined) {
       const activeTask =
         this.findTaskAtLine(ast, position.line) ??
         this.findPrecedingTaskModule(lines, position.line);
@@ -1026,17 +1021,22 @@ export class AnsibleLanguageService {
     lines: readonly string[],
     lineIdx: number,
   ): { readonly moduleName: string } | undefined {
-    const currentIndent = /^(\s*)/.exec(lines[lineIdx] ?? '')?.[1]?.length ?? 0;
+    const currentIndent = countLeadingSpaces(lines[lineIdx] ?? '');
     for (let i = lineIdx - 1; i >= 0; i--) {
       const line = lines[i] ?? '';
-      if (/^\s*(?:#.*)?$/.test(line)) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0 || trimmed.startsWith('#')) {
         continue;
       }
-      const indent = /^(\s*)/.exec(line)?.[1]?.length ?? 0;
+      const indent = countLeadingSpaces(line);
       if (indent < currentIndent) {
-        const kv = /^\s*(?:-\s+)?([A-Za-z0-9_.-]+)\s*:/.exec(line);
-        if (kv) {
-          const key = kv[1] ?? '';
+        let afterIndent = line.slice(indent);
+        if (afterIndent.startsWith('- ') || afterIndent.startsWith('-\t')) {
+          afterIndent = afterIndent.slice(1).trimStart();
+        }
+        const colonIdx = afterIndent.indexOf(':');
+        if (colonIdx > 0) {
+          const key = afterIndent.slice(0, colonIdx).trim();
           if (!TASK_LEVEL_NON_MODULE_KEYS.has(key) && this.registry.getModule(key)) {
             return { moduleName: key };
           }
@@ -1058,7 +1058,7 @@ export class AnsibleLanguageService {
     if (task) {
       const mod = this.registry.getModule(task.moduleName);
       if (mod && lineIdx > task.moduleRange.start.line) {
-        const currentIndent = /^(\s*)/.exec(lines[lineIdx] ?? '')?.[1]?.length ?? 0;
+        const currentIndent = countLeadingSpaces(lines[lineIdx] ?? '');
         if (currentIndent > task.moduleRange.start.column) {
           return mod;
         }
@@ -1088,10 +1088,23 @@ export class AnsibleLanguageService {
     line: string,
     notifyNames: readonly string[],
   ): string | undefined {
-    const cleaned = line
-      .replace(/^\s*(?:-\s*)?(?:notify\s*:\s*)?/, '')
-      .trim()
-      .replace(/^["']|["']$/g, '');
+    let cleaned = line.trim();
+    if (cleaned.startsWith('-')) {
+      cleaned = cleaned.slice(1).trimStart();
+    }
+    if (cleaned.startsWith('notify')) {
+      const afterNotify = cleaned.slice('notify'.length).trimStart();
+      if (afterNotify.startsWith(':')) {
+        cleaned = afterNotify.slice(1).trimStart();
+      }
+    }
+    if (
+      cleaned.length >= 2 &&
+      ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+        (cleaned.startsWith("'") && cleaned.endsWith("'")))
+    ) {
+      cleaned = cleaned.slice(1, -1);
+    }
     if (notifyNames.includes(cleaned)) {
       return cleaned;
     }
@@ -1188,25 +1201,139 @@ export class AnsibleLanguageService {
   }
 }
 
+function countLeadingSpaces(line: string): number {
+  let count = 0;
+  while (count < line.length) {
+    const c = line.charCodeAt(count);
+    if (c !== 32 && c !== 9) {
+      break;
+    }
+    count++;
+  }
+  return count;
+}
+
+function isHostsCompletionPrefix(beforeCursor: string): boolean {
+  let s = beforeCursor.trimStart();
+  if (s.startsWith('-')) {
+    s = s.slice(1).trimStart();
+  }
+  if (!s.startsWith('hosts')) {
+    return false;
+  }
+  s = s.slice('hosts'.length).trimStart();
+  if (!s.startsWith(':')) {
+    return false;
+  }
+  s = s.slice(1).trimStart();
+  return !s.includes(' ') && !s.includes('\t');
+}
+
+function extractTrailingDottedAccess(
+  beforeCursor: string,
+): { readonly rootVar: string; readonly subPath: string } | undefined {
+  let idx = beforeCursor.length;
+  while (idx > 0) {
+    const c = beforeCursor.charCodeAt(idx - 1);
+    const isIdOrDot =
+      (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 46;
+    if (!isIdOrDot) {
+      break;
+    }
+    idx--;
+  }
+  const token = beforeCursor.slice(idx);
+  const dotIdx = token.indexOf('.');
+  if (dotIdx <= 0) {
+    return undefined;
+  }
+  const rootVar = token.slice(0, dotIdx);
+  const first = rootVar.charCodeAt(0);
+  const validStart = (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first === 95;
+  if (!validStart) {
+    return undefined;
+  }
+  return { rootVar, subPath: token.slice(dotIdx + 1) };
+}
+
+function isFilterCompletionPrefix(beforeCursor: string): boolean {
+  const pipeIdx = beforeCursor.lastIndexOf('|');
+  if (pipeIdx === -1) {
+    return false;
+  }
+  const afterPipe = beforeCursor.slice(pipeIdx + 1).trimStart();
+  for (let i = 0; i < afterPipe.length; i++) {
+    const c = afterPipe.charCodeAt(i);
+    const isId = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+    if (!isId) {
+      return false;
+    }
+  }
+  const beforePipe = beforeCursor.slice(0, pipeIdx);
+  const lastOpen = beforePipe.lastIndexOf('{{');
+  const lastClose = beforePipe.lastIndexOf('}}');
+  if (lastOpen > lastClose) {
+    return true;
+  }
+  const trimmed = beforePipe.trimStart();
+  return trimmed.startsWith('when:') || trimmed.startsWith('when ');
+}
+
+function extractParamValuePrefixKey(beforeCursor: string): string | undefined {
+  const trimmed = beforeCursor.trimStart();
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx <= 0) {
+    return undefined;
+  }
+  const key = trimmed.slice(0, colonIdx).trim();
+  if (key.length === 0) {
+    return undefined;
+  }
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i);
+    const ok =
+      (c >= 48 && c <= 57) ||
+      (c >= 65 && c <= 90) ||
+      (c >= 97 && c <= 122) ||
+      c === 95 ||
+      c === 46 ||
+      c === 45;
+    if (!ok) {
+      return undefined;
+    }
+  }
+  const valPart = trimmed.slice(colonIdx + 1).trimStart();
+  for (let i = 0; i < valPart.length; i++) {
+    const c = valPart.charCodeAt(i);
+    const ok =
+      (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 45;
+    if (!ok) {
+      return undefined;
+    }
+  }
+  return key;
+}
+
 function parseIniInventory(content: string): InventoryInfo {
   const hosts = new Set<string>();
   const groups = new Set<string>();
   let inChildren = false;
 
-  for (const rawLine of content.split(/\r?\n/)) {
+  for (const rawLine of content.replaceAll('\r\n', '\n').split('\n')) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#') || line.startsWith(';')) {
       continue;
     }
-    const sectionMatch = /^\[([^\]]+)\]$/.exec(line);
-    if (sectionMatch) {
-      const section = sectionMatch[1] ?? '';
-      inChildren = section.endsWith(':children');
-      const groupName = section.split(':')[0] ?? '';
-      if (groupName) {
-        groups.add(groupName);
+    if (line.startsWith('[') && line.endsWith(']') && line.length > 2) {
+      const section = line.slice(1, -1);
+      if (!section.includes('[') && !section.includes(']')) {
+        inChildren = section.endsWith(':children');
+        const groupName = section.split(':')[0] ?? '';
+        if (groupName) {
+          groups.add(groupName);
+        }
+        continue;
       }
-      continue;
     }
     if (inChildren) {
       groups.add(line);
@@ -1249,8 +1376,13 @@ function isInsideExpressionOrCondition(beforeCursor: string, fullLine: string): 
   if (lastOpen > lastClose) {
     return true;
   }
-  if (/^\s*(?:when|changed_when|failed_when|until)\s*:/.test(fullLine)) {
-    return true;
+  const trimmed = fullLine.trimStart();
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx > 0) {
+    const key = trimmed.slice(0, colonIdx).trim();
+    if (key === 'when' || key === 'changed_when' || key === 'failed_when' || key === 'until') {
+      return true;
+    }
   }
   return false;
 }
