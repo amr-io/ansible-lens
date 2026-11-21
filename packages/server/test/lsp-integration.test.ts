@@ -126,7 +126,8 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
         ? modHover.contents.value
         : '';
     expect(modHoverVal).toContain('ansible.builtin.stat');
-    expect(modHoverVal).toContain('docs.ansible.com');
+    expect(modHoverVal).toContain('[Open Official Docs](https://docs.ansible.com');
+    expect(modHoverVal.split('\n')[0]).toContain('[Open Official Docs]');
     expect(modHoverVal).toContain('Parameters');
 
     // 2. Hover on parameter (`update_cache` or `path`)
@@ -140,7 +141,7 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
         ? paramHover.contents.value
         : '';
     expect(paramHoverVal).toContain('Parameter `path`');
-    expect(paramHoverVal).toContain('#parameter-path');
+    expect(paramHoverVal.split('\n')[0]).toContain('#parameter-path');
 
     // 3. Hover on registered return field (`nginx_stat.stat`)
     const regFieldPos = findLineAndChar(siteText, 'nginx_stat.stat');
@@ -156,7 +157,7 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
         ? regHover.contents.value
         : '';
     expect(regHoverVal).toContain('nginx_stat.stat');
-    expect(regHoverVal).toContain('#return-stat');
+    expect(regHoverVal.split('\n')[0]).toContain('#return-stat');
 
     // 4. Hover on workspace variable showing 22-level precedence breakdown (`http_port`)
     const templatePath = path.join(FIXTURE_ROOT, 'roles/webserver/tasks/main.yml');
@@ -193,13 +194,23 @@ describe('Ansible Lens Language Server — End-to-End LSP Integration', () => {
       : (protocolCompletions?.items ?? []);
     expect(compItems.some((c) => c.label === 'ansible.builtin.stat')).toBe(true);
 
-    // 5. DocumentLinks on modules, params, and return fields
-    const docLinks =
+    // 5. DocumentLinks: defaults to false (zero permanent underlines), and when enabled emits ONLY module links (never parameter or return links)
+    const defaultDocLinks =
       (await clientConn.sendRequest(DocumentLinkRequest.type, {
         textDocument: { uri: siteUri },
       })) ?? [];
-    expect(docLinks.some((l) => l.target?.includes('copy_module.html#parameter-src'))).toBe(true);
-    expect(docLinks.some((l) => l.target?.includes('stat_module.html#return-stat'))).toBe(true);
+    expect(defaultDocLinks).toEqual([]);
+
+    await clientConn.sendRequest('ansibleLens/setDocumentLinksEnabled', { enabled: true });
+    const enabledDocLinks =
+      (await clientConn.sendRequest(DocumentLinkRequest.type, {
+        textDocument: { uri: siteUri },
+      })) ?? [];
+    expect(enabledDocLinks.length).toBeGreaterThan(0);
+    expect(enabledDocLinks.some((l) => l.target?.endsWith('stat_module.html'))).toBe(true);
+    expect(enabledDocLinks.some((l) => l.target?.includes('#parameter-'))).toBe(false);
+    expect(enabledDocLinks.some((l) => l.target?.includes('#return-'))).toBe(false);
+    await clientConn.sendRequest('ansibleLens/setDocumentLinksEnabled', { enabled: false });
 
     // 6. Definition for roles, handlers, template src, and variables
     const rolePos = findLineAndChar(siteText, '- webserver');

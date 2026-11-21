@@ -51,12 +51,21 @@ function updateStatusBar(
   item.show();
 }
 
-function isWorkspaceAnsibleEnabled(): boolean {
+function isWorkspaceAnsibleEnabled(docFsPath?: string): boolean {
   const folders = vscode.workspace.workspaceFolders ?? [];
-  return workspaceHasAnsibleCfg(
-    folders.map((f) => f.uri.fsPath),
-    (filePath) => fs.existsSync(filePath),
-  );
+  const candidateDirs = folders.map((f) => f.uri.fsPath);
+  if (docFsPath) {
+    let cur = path.dirname(docFsPath);
+    for (let depth = 0; depth < 8; depth++) {
+      candidateDirs.push(cur);
+      const parent = path.dirname(cur);
+      if (parent === cur) {
+        break;
+      }
+      cur = parent;
+    }
+  }
+  return workspaceHasAnsibleCfg(candidateDirs, (filePath) => fs.existsSync(filePath));
 }
 
 function evaluateEditorActivation(
@@ -70,7 +79,7 @@ function evaluateEditorActivation(
     return;
   }
   const doc = editor.document;
-  const hasCfg = isWorkspaceAnsibleEnabled();
+  const hasCfg = isWorkspaceAnsibleEnabled(doc.uri.fsPath);
   const result = shouldActivateForDocument(
     {
       uri: doc.uri.toString(),
@@ -104,6 +113,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   };
 
+  const docLinksEnabled = vscode.workspace
+    .getConfiguration('ansibleLens')
+    .get<boolean>('documentLinks.enabled', false);
+
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       { scheme: 'file', language: 'yaml' },
@@ -112,6 +125,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { scheme: 'untitled', language: 'ansible' },
     ],
     outputChannel,
+    initializationOptions: {
+      documentLinksEnabled: docLinksEnabled,
+    },
     synchronize: {
       fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{yml,yaml,ini,cfg}'),
     },
@@ -201,6 +217,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const active = vscode.window.activeTextEditor;
       if (active && active.document.uri.toString() === doc.uri.toString() && statusBarItem) {
         evaluateEditorActivation(active, statusBarItem, collectionsCount, logger);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(async (event) => {
+      if (event.affectsConfiguration('ansibleLens.documentLinks.enabled') && client) {
+        const enabled = vscode.workspace
+          .getConfiguration('ansibleLens')
+          .get<boolean>('documentLinks.enabled', false);
+        try {
+          await client.sendRequest('ansibleLens/setDocumentLinksEnabled', { enabled });
+        } catch (error) {
+          logger.warn('Failed to update documentLinks.enabled setting on server', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }),
   );

@@ -8,10 +8,11 @@ import type {
 
 /**
  * Formats a Pylance-style Markdown hover card for an Ansible module.
+ * Always keeps the clickable `Open Official Docs` link at the top of the hover card.
  */
 export function formatModuleHoverMarkdown(mod: ModuleMetadataSpec): string {
   const lines: string[] = [
-    `### \`${mod.fqcn}\``,
+    `### \`${mod.fqcn}\` — [Open Official Docs](${mod.docUrl})`,
     `*Collection:* \`${mod.collection}\``,
     '',
     mod.shortDescription,
@@ -45,19 +46,20 @@ export function formatModuleHoverMarkdown(mod: ModuleMetadataSpec): string {
     }
   }
 
-  lines.push('', `[Official Ansible Documentation](${mod.docUrl})`);
   return lines.join('\n');
 }
 
 /**
  * Formats a hover card for a specific module parameter or suboption.
+ * Places the clickable `Open Official Docs` deep `#parameter-*` link at the top.
  */
 export function formatParameterHoverMarkdown(
   mod: ModuleMetadataSpec,
   opt: ModuleOptionSpec,
 ): string {
+  const paramUrl = `${mod.docUrl}#parameter-${opt.name}`;
   const lines: string[] = [
-    `### \`${mod.fqcn}\` — Parameter \`${opt.name}\``,
+    `### \`${mod.fqcn}\` — Parameter \`${opt.name}\` ([Open Official Docs](${paramUrl}))`,
     '',
     `- **Type:** \`${opt.type}\`${opt.elements ? ` (elements: \`${opt.elements}\`)` : ''}`,
     `- **Required:** ${opt.required ? 'yes' : 'no'}`,
@@ -72,19 +74,20 @@ export function formatParameterHoverMarkdown(
     lines.push(`- **Aliases:** ${opt.aliases.map((a) => `\`${a}\``).join(', ')}`);
   }
   lines.push('', opt.description);
-  lines.push('', `[Parameter Documentation](${mod.docUrl}#parameter-${opt.name})`);
   return lines.join('\n');
 }
 
 /**
  * Formats a hover card for a `register:` variable root.
+ * Places the clickable `Open Official Docs` link at the top when module metadata is available.
  */
 export function formatRegisteredVarHoverMarkdown(
   reg: InferredRegisteredVariable,
   mod?: ModuleMetadataSpec,
 ): string {
+  const topLink = mod ? ` — [Open Official Docs](${mod.docUrl}#return-values)` : '';
   const lines: string[] = [
-    `### Registered Variable \`${reg.name}\``,
+    `### Registered Variable \`${reg.name}\`${topLink}`,
     '',
     `- **Source Module:** \`${reg.moduleFqcn}\``,
     ...(reg.taskName ? [`- **Task:** ${reg.taskName}`] : []),
@@ -95,14 +98,12 @@ export function formatRegisteredVarHoverMarkdown(
   for (const field of Object.values(reg.fields)) {
     lines.push(`- \`${reg.name}.${field.name}\` (\`${field.type}\`): ${field.description}`);
   }
-  if (mod) {
-    lines.push('', `[Module Return Documentation](${mod.docUrl}#return-values)`);
-  }
   return lines.join('\n');
 }
 
 /**
  * Formats a hover card for a dotted return field on a `register:` variable.
+ * Places the clickable `Open Official Docs` deep `#return-*` link at the top.
  */
 export function formatReturnFieldHoverMarkdown(
   varPath: string,
@@ -110,8 +111,9 @@ export function formatReturnFieldHoverMarkdown(
   mod?: ModuleMetadataSpec,
 ): string {
   const docLink = field.docUrl ?? (mod ? `${mod.docUrl}#return-${field.name}` : undefined);
+  const topLink = docLink ? ` ([Open Official Docs](${docLink}))` : '';
   const lines: string[] = [
-    `### Return Field \`${varPath}\``,
+    `### Return Field \`${varPath}\`${topLink}`,
     '',
     `- **Type:** \`${field.type}\``,
     `- **Returned:** *${field.returned}*`,
@@ -120,9 +122,6 @@ export function formatReturnFieldHoverMarkdown(
     lines.push(`- **Sample:** \`${JSON.stringify(field.sample)}\``);
   }
   lines.push('', field.description);
-  if (docLink) {
-    lines.push('', `[Return Field Documentation](${docLink})`);
-  }
   return lines.join('\n');
 }
 

@@ -104,6 +104,14 @@ describe('scripts/metadata-builder', () => {
       packs.get('community.general')?.modules['community.general.ufw']?.deprecated?.removedIn,
     ).toBe('10.0.0');
 
+    const allDiscoveredPacks = buildPacksFromMetadataDump(sampleDump, {
+      ansibleCoreVersion: '2.16.3',
+      collectionVersions: { 'community.general': '8.3.0' },
+      generatedAt: '2026-11-20T00:00:00Z',
+    });
+    expect(allDiscoveredPacks.size).toBe(2);
+    expect(allDiscoveredPacks.get('community.general')?.version).toBe('8.3.0');
+
     const outDir = createTempDir();
     const manifest = writeCompressedPacksAndManifest(
       packs,

@@ -6,5 +6,11 @@ export {
   type ClassifiedVariableSource,
   type PrecedenceSpec,
 } from './variableGraph.js';
-export { checkProjectIntegrity } from './projectIntegrity.js';
+export {
+  checkProjectIntegrity,
+  discoverAnsibleProjectContext,
+  parseAnsibleCfg,
+  type AnsibleProjectContext,
+  type ParsedAnsibleCfg,
+} from './projectIntegrity.js';
 export { findClosestMatch, levenshteinDistance } from './similarity.js';

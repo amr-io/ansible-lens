@@ -238,21 +238,24 @@ export function transformRawModuleEntry(
 
 /**
  * Transforms an `ansible-doc --metadata-dump` payload into deterministic `CollectionMetadataPack`
- * objects grouped by the requested collection names.
+ * objects grouped by the requested collection names (or all discovered collections if `collections` is empty/omitted).
  */
 export function buildPacksFromMetadataDump(
   dump: AnsibleDocDump,
   options: {
-    readonly collections: readonly string[];
+    readonly collections?: readonly string[];
     readonly ansibleCoreVersion?: string;
     readonly collectionVersions?: Readonly<Record<string, string>>;
     readonly generatedAt?: string;
-  },
+  } = {},
 ): ReadonlyMap<string, CollectionMetadataPack> {
   const rawModules = dump.all?.module ?? {};
+  const allowAll = !options.collections || options.collections.length === 0;
   const grouped = new Map<string, Record<string, ModuleMetadataSpec>>();
-  for (const col of options.collections) {
-    grouped.set(col, {});
+  if (options.collections) {
+    for (const col of options.collections) {
+      grouped.set(col, {});
+    }
   }
 
   for (const fqcn of Object.keys(rawModules).sort()) {
@@ -264,17 +267,22 @@ export function buildPacksFromMetadataDump(
     if (!spec) {
       continue;
     }
-    const bucket = grouped.get(spec.collection);
+    let bucket = grouped.get(spec.collection);
     if (!bucket) {
-      continue;
+      if (!allowAll) {
+        continue;
+      }
+      bucket = {};
+      grouped.set(spec.collection, bucket);
     }
     bucket[spec.fqcn] = spec;
   }
 
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const packs = new Map<string, CollectionMetadataPack>();
+  const targetCollections = allowAll ? Array.from(grouped.keys()).sort() : options.collections!;
 
-  for (const col of options.collections) {
+  for (const col of targetCollections) {
     const modules = grouped.get(col) ?? {};
     if (Object.keys(modules).length === 0) {
       continue;
@@ -358,28 +366,65 @@ export function detectAnsibleCoreVersion(): string {
 }
 
 /**
- * Invokes `ansible-doc -t module --metadata-dump --no-fail-on-errors <collection>`
- * for a single collection filter to avoid multi-minute full-collection dumps.
+ * Invokes `ansible-galaxy collection list --format json` to discover exact semantic versions
+ * for all installed collections.
  */
-export function runAnsibleDocMetadataDump(collectionFilter: string): AnsibleDocDump {
-  const stdout = execFileSync(
-    'ansible-doc',
-    ['-t', 'module', '--metadata-dump', '--no-fail-on-errors', collectionFilter],
-    {
+export function detectInstalledCollectionVersions(): Readonly<Record<string, string>> {
+  const versions: Record<string, string> = {};
+  try {
+    const stdout = execFileSync('ansible-galaxy', ['collection', 'list', '--format', 'json'], {
       encoding: 'utf8',
-      maxBuffer: 256 * 1024 * 1024,
+      maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const parsed = JSON.parse(stdout) as unknown;
+    if (isRecord(parsed)) {
+      for (const pathEntries of Object.values(parsed)) {
+        if (isRecord(pathEntries)) {
+          for (const [colName, colMeta] of Object.entries(pathEntries)) {
+            if (isRecord(colMeta) && typeof colMeta['version'] === 'string') {
+              versions[colName] = colMeta['version'];
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    void err;
+  }
+  return versions;
+}
+
+/**
+ * Invokes `ansible-doc -t module --metadata-dump --no-fail-on-errors` either for a single
+ * collection filter or across all installed collections when `collectionFilter` is omitted.
+ */
+export function runAnsibleDocMetadataDump(collectionFilter?: string): AnsibleDocDump {
+  const cmdArgs = ['-t', 'module', '--metadata-dump', '--no-fail-on-errors'];
+  if (collectionFilter !== undefined && collectionFilter.length > 0) {
+    cmdArgs.push(collectionFilter);
+  }
+  const stdout = execFileSync('ansible-doc', cmdArgs, {
+    encoding: 'utf8',
+    maxBuffer: 512 * 1024 * 1024,
+    env: {
+      ...process.env,
+      ANSIBLE_DEPRECATION_WARNINGS: 'False',
     },
-  );
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   return JSON.parse(stdout) as AnsibleDocDump;
 }
 
 /**
  * CLI entrypoint: generates compressed `.json.gz` packs and `manifest.json`.
+ * Supports `--all` / `--all-installed` (all collections in the `ansible` community package),
+ * `--all-top` (builtin + Top 10), and `--collection <name>`.
  */
 export function runMetadataBuilderCli(args: readonly string[]): MetadataManifest {
   let outDir = path.resolve(process.cwd(), 'packages/core/data');
   const requestedCollections: string[] = [];
+  let dumpAllInstalled = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -391,12 +436,26 @@ export function runMetadataBuilderCli(args: readonly string[]): MetadataManifest
       i += 1;
     } else if (arg === '--all-top') {
       requestedCollections.push(...TOP_COLLECTIONS);
+    } else if (arg === '--all' || arg === '--all-installed') {
+      dumpAllInstalled = true;
     }
   }
 
-  const collections = requestedCollections.length > 0 ? requestedCollections : ['ansible.builtin'];
   const coreVersion = detectAnsibleCoreVersion();
+  const collectionVersions = detectInstalledCollectionVersions();
   const generatedAt = new Date().toISOString();
+
+  if (dumpAllInstalled) {
+    const fullDump = runAnsibleDocMetadataDump();
+    const allPacks = buildPacksFromMetadataDump(fullDump, {
+      ansibleCoreVersion: coreVersion,
+      collectionVersions,
+      generatedAt,
+    });
+    return writeCompressedPacksAndManifest(allPacks, outDir, coreVersion, generatedAt);
+  }
+
+  const collections = requestedCollections.length > 0 ? requestedCollections : ['ansible.builtin'];
   const mergedPacks = new Map<string, CollectionMetadataPack>();
 
   for (const col of collections) {
@@ -404,6 +463,7 @@ export function runMetadataBuilderCli(args: readonly string[]): MetadataManifest
     const colPacks = buildPacksFromMetadataDump(dump, {
       collections: [col],
       ansibleCoreVersion: coreVersion,
+      collectionVersions,
       generatedAt,
     });
     for (const [k, v] of colPacks.entries()) {

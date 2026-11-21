@@ -14,6 +14,7 @@ import {
   WorkspaceVariableGraph,
   checkProjectIntegrity,
   createDefaultMetadataRegistry,
+  discoverAnsibleProjectContext,
   inferRegisteredVariables,
   lintAnsibleDocument,
 } from '@ansible-lens/core';
@@ -70,6 +71,7 @@ export interface LanguageServiceOptions {
   readonly fs?: IWorkspaceFs;
   readonly logger?: ServerLogger;
   readonly workspaceRoots?: readonly string[];
+  readonly documentLinksEnabled?: boolean;
 }
 
 interface IndexedDocumentEntry {
@@ -92,17 +94,27 @@ export class AnsibleLanguageService {
   private readonly documents = new Map<string, IndexedDocumentEntry>();
   private readonly workspaceRoots: string[] = [];
   private variableGraph = new WorkspaceVariableGraph();
+  private documentLinksEnabled: boolean;
 
   public constructor(options?: LanguageServiceOptions) {
     this.registry = options?.registry ?? createDefaultMetadataRegistry();
     ensureFallbackModulesLoaded(this.registry);
     this.fs = options?.fs ?? new NodeWorkspaceFs();
     this.logger = options?.logger ?? createServerLogger('AnsibleLanguageService');
+    this.documentLinksEnabled = options?.documentLinksEnabled ?? false;
     if (options?.workspaceRoots) {
       for (const root of options.workspaceRoots) {
         this.addWorkspaceRoot(root);
       }
     }
+  }
+
+  public setDocumentLinksEnabled(enabled: boolean): void {
+    this.documentLinksEnabled = enabled;
+  }
+
+  public isDocumentLinksEnabled(): boolean {
+    return this.documentLinksEnabled;
   }
 
   public getRegistry(): MetadataRegistry {
@@ -207,12 +219,7 @@ export class AnsibleLanguageService {
     const lintDiags = coreDiags.length > 0 ? coreDiags : fallbackLintDocument(ast, this.registry);
 
     const root = this.findWorkspaceRootForUri(uri);
-    const integrityDiags = root
-      ? [
-          ...checkProjectIntegrity(ast, root, this.fs),
-          ...this.fallbackProjectIntegrityChecks(ast, uri, root),
-        ]
-      : [];
+    const integrityDiags = root ? checkProjectIntegrity(ast, root, this.fs) : [];
 
     const combined = deduplicateDiagnostics([...lintDiags, ...integrityDiags]);
     return combined.map((d) => toLspDiagnostic(d));
@@ -504,6 +511,9 @@ export class AnsibleLanguageService {
   }
 
   public getDocumentLinks(uri: string, text?: string): DocumentLink[] {
+    if (!this.documentLinksEnabled) {
+      return [];
+    }
     const docText = text ?? this.documents.get(uri)?.text;
     if (docText === undefined) {
       return [];
@@ -516,7 +526,6 @@ export class AnsibleLanguageService {
 
     const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
     const links: DocumentLink[] = [];
-    const regMap = this.getRegisteredVariables(ast);
 
     for (const task of collectAllTasks(ast)) {
       const mod = this.registry.getModule(task.moduleName);
@@ -528,47 +537,6 @@ export class AnsibleLanguageService {
         target: mod.docUrl,
         tooltip: `Open ${mod.fqcn} docs`,
       });
-      for (const param of task.params) {
-        const opt =
-          mod.options[param.name] ??
-          Object.values(mod.options).find((o) => o.aliases?.includes(param.name));
-        if (opt) {
-          links.push({
-            range: toLspRange(param.keyRange),
-            target: `${mod.docUrl}#parameter-${opt.name}`,
-            tooltip: `Open ${mod.fqcn} #parameter-${opt.name} docs`,
-          });
-        }
-      }
-    }
-
-    // Links for registered return fields referenced anywhere in the document
-    const lines = docText.split(/\r?\n/);
-    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-      const line = lines[lineIdx] ?? '';
-      const regex = /\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b/g;
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(line)) !== null) {
-        const varName = match[1] ?? '';
-        const fieldName = match[2] ?? '';
-        const reg = regMap.get(varName);
-        if (!reg) {
-          continue;
-        }
-        const field = reg.fields[fieldName];
-        const mod = this.registry.getModule(reg.moduleFqcn);
-        if (field && mod) {
-          const startChar = match.index + varName.length + 1;
-          links.push({
-            range: {
-              start: { line: lineIdx, character: startChar },
-              end: { line: lineIdx, character: startChar + fieldName.length },
-            },
-            target: `${mod.docUrl}#return-${fieldName}`,
-            tooltip: `Open ${mod.fqcn} #return-${fieldName} docs`,
-          });
-        }
-      }
     }
 
     return links;
@@ -589,26 +557,29 @@ export class AnsibleLanguageService {
     const lines = docText.split(/\r?\n/);
     const line = lines[position.line] ?? '';
     const root = this.findWorkspaceRootForUri(uri) ?? path.dirname(uriToFsPath(uri));
+    const projectCtx = discoverAnsibleProjectContext(uri, root, this.fs);
 
-    // 1. roles: entry -> roles/<name>/tasks/main.yml
+    // 1. roles: entry -> roles/<name>/tasks/main.yml (across ansible.cfg roles_path & nested root)
     for (const play of ast.plays) {
       for (const roleRef of play.roles) {
         if (isPositionInRange(position, roleRef.range)) {
-          const candidates = [
-            path.join(root, 'roles', roleRef.name, 'tasks', 'main.yml'),
-            path.join(root, 'roles', roleRef.name, 'tasks', 'main.yaml'),
-          ];
-          for (const candidate of candidates) {
-            if (this.fs.exists(candidate)) {
-              return [
-                {
-                  uri: fsPathToUri(candidate),
-                  range: {
-                    start: { line: 0, character: 0 },
-                    end: { line: 0, character: 0 },
+          for (const roleBase of projectCtx.rolesPaths) {
+            const candidates = [
+              path.join(roleBase, roleRef.name, 'tasks', 'main.yml'),
+              path.join(roleBase, roleRef.name, 'tasks', 'main.yaml'),
+            ];
+            for (const candidate of candidates) {
+              if (this.fs.exists(candidate)) {
+                return [
+                  {
+                    uri: fsPathToUri(candidate),
+                    range: {
+                      start: { line: 0, character: 0 },
+                      end: { line: 0, character: 0 },
+                    },
                   },
-                },
-              ];
+                ];
+              }
             }
           }
         }
@@ -617,17 +588,23 @@ export class AnsibleLanguageService {
       // 2. vars_files: entry -> target YAML file
       for (const vf of play.varsFiles) {
         if (isPositionInRange(position, vf.range)) {
-          const resolved = path.resolve(path.dirname(uriToFsPath(uri)), vf.path);
-          if (this.fs.exists(resolved)) {
-            return [
-              {
-                uri: fsPathToUri(resolved),
-                range: {
-                  start: { line: 0, character: 0 },
-                  end: { line: 0, character: 0 },
+          const candidates = [
+            path.resolve(projectCtx.documentDir, vf.path),
+            path.resolve(projectCtx.ansibleRoot, vf.path),
+            path.resolve(root, vf.path),
+          ];
+          for (const resolved of candidates) {
+            if (this.fs.exists(resolved)) {
+              return [
+                {
+                  uri: fsPathToUri(resolved),
+                  range: {
+                    start: { line: 0, character: 0 },
+                    end: { line: 0, character: 0 },
+                  },
                 },
-              },
-            ];
+              ];
+            }
           }
         }
       }
@@ -653,7 +630,12 @@ export class AnsibleLanguageService {
         isPositionInRange(position, srcParam.valueRange) &&
         typeof srcParam.value === 'string'
       ) {
-        const resolved = this.resolveTaskAssetPath(uri, root, task.moduleName, srcParam.value);
+        const resolved = this.resolveTaskAssetPath(
+          uri,
+          projectCtx.ansibleRoot,
+          task.moduleName,
+          srcParam.value,
+        );
         if (resolved) {
           return [
             {
@@ -797,12 +779,29 @@ export class AnsibleLanguageService {
     const groups = new Set<string>(['all', 'ungrouped']);
 
     const searchDirs = new Set<string>(this.workspaceRoots);
+    const directFiles = new Set<string>();
     if (forUri) {
-      const root = this.findWorkspaceRootForUri(forUri);
-      if (root) {
-        searchDirs.add(root);
-      } else {
-        searchDirs.add(path.dirname(uriToFsPath(forUri)));
+      const root = this.findWorkspaceRootForUri(forUri) ?? path.dirname(uriToFsPath(forUri));
+      const ctx = discoverAnsibleProjectContext(forUri, root, this.fs);
+      searchDirs.add(root);
+      searchDirs.add(ctx.ansibleRoot);
+      for (const invPath of ctx.inventoryPaths) {
+        directFiles.add(invPath);
+      }
+    }
+
+    for (const invFile of directFiles) {
+      if (this.fs.exists(invFile) && !invFile.endsWith('.yml') && !invFile.endsWith('.yaml')) {
+        const content = this.fs.readFile(invFile);
+        if (content) {
+          const parsed = parseIniInventory(content);
+          for (const h of parsed.hosts) {
+            hosts.add(h);
+          }
+          for (const g of parsed.groups) {
+            groups.add(g);
+          }
+        }
       }
     }
 
@@ -1113,7 +1112,7 @@ export class AnsibleLanguageService {
 
   private resolveTaskAssetPath(
     docUri: string,
-    workspaceRoot: string,
+    ansibleRoot: string,
     moduleName: string,
     srcValue: string,
   ): string | undefined {
@@ -1121,8 +1120,10 @@ export class AnsibleLanguageService {
     const subDir = moduleName.endsWith('template') ? 'templates' : 'files';
     const candidates = [
       path.resolve(docDir, srcValue),
+      path.resolve(docDir, subDir, srcValue),
       path.resolve(docDir, '..', subDir, srcValue),
-      path.resolve(workspaceRoot, srcValue),
+      path.resolve(ansibleRoot, srcValue),
+      path.resolve(ansibleRoot, subDir, srcValue),
     ];
     for (const candidate of candidates) {
       if (this.fs.exists(candidate)) {
@@ -1151,53 +1152,6 @@ export class AnsibleLanguageService {
       dir = parent;
     }
     return this.workspaceRoots[0];
-  }
-
-  private fallbackProjectIntegrityChecks(
-    ast: AnsibleDocumentAst,
-    docUri: string,
-    workspaceRoot: string,
-  ): LintDiagnostic[] {
-    const diagnostics: LintDiagnostic[] = [];
-    for (const play of ast.plays) {
-      for (const roleRef of play.roles) {
-        const roleDir = path.join(workspaceRoot, 'roles', roleRef.name);
-        if (!this.fs.exists(roleDir)) {
-          diagnostics.push({
-            ruleId: 'missing-role',
-            message: `Referenced role "${roleRef.name}" was not found under roles/${roleRef.name}.`,
-            severity: 'error',
-            range: roleRef.range,
-            quickFixes: [],
-          });
-        }
-      }
-    }
-
-    for (const task of collectAllTasks(ast)) {
-      if (task.moduleName.endsWith('copy') || task.moduleName.endsWith('template')) {
-        const srcParam = task.params.find((p) => p.name === 'src');
-        if (srcParam && typeof srcParam.value === 'string' && !srcParam.value.includes('{{')) {
-          const resolved = this.resolveTaskAssetPath(
-            docUri,
-            workspaceRoot,
-            task.moduleName,
-            srcParam.value,
-          );
-          if (!resolved) {
-            diagnostics.push({
-              ruleId: 'missing-src-file',
-              message: `Source file "${srcParam.value}" does not exist in workspace.`,
-              severity: 'warning',
-              range: srcParam.valueRange,
-              quickFixes: [],
-            });
-          }
-        }
-      }
-    }
-
-    return diagnostics;
   }
 }
 

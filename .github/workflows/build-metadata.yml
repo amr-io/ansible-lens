@@ -39,26 +39,15 @@ jobs:
           npm run build --workspace=packages/core
           npm run build --workspace=scripts/metadata-builder
 
-      - name: Install ansible-core and Top 10 Galaxy collections
+      - name: Install full Ansible community package (ansible-core + all included collections)
         run: |
           python -m pip install --upgrade pip
-          pip install ansible-core
-          ansible-galaxy collection install \
-            ansible.posix \
-            community.general \
-            community.docker \
-            community.crypto \
-            ansible.windows \
-            amazon.aws \
-            kubernetes.core \
-            community.mysql \
-            community.postgresql \
-            ansible.utils
+          pip install ansible
 
-      - name: Generate compressed .json.gz packs and SHA-256 manifest.json
+      - name: Generate compressed .json.gz packs and SHA-256 manifest.json for all collections
         run: |
           mkdir -p dist-metadata
-          node scripts/metadata-builder/dist/index.js --all-top --out-dir dist-metadata
+          node scripts/metadata-builder/dist/index.js --all --out-dir dist-metadata
 
       - name: Upload metadata pack artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

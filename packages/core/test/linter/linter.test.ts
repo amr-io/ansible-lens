@@ -81,7 +81,36 @@ describe('lintAnsibleDocument — all clean-room rules & Quick-Fixes', () => {
     const diags = lintAnsibleDocument(ast, registry);
     const unknownMod = diags.find((d) => d.ruleId === 'unknown-module');
     expect(unknownMod).toBeDefined();
+    expect(unknownMod?.severity).toBe('error');
     expect(unknownMod?.quickFixes[0]?.edits[0]?.newText).toBe('ansible.builtin.copy');
+
+    // Valid-looking FQCNs from unloaded collections must not be flagged as red errors
+    const unloadedAst = makeAst('file:///ws/site.yml', 'playbook', {
+      plays: [
+        makePlay({
+          tasks: [
+            makeTask('community.general.ufw', {
+              name: 'Allow SSH via community.general.ufw',
+              isFqcn: true,
+              range: makeRange(2, 2, 28),
+            }),
+            makeTask('ansible.posix.synchronize', {
+              name: 'Sync via ansible.posix.synchronize',
+              isFqcn: true,
+              range: makeRange(6, 2, 120),
+            }),
+          ],
+        }),
+      ],
+    });
+    const unloadedDiags = lintAnsibleDocument(unloadedAst, registry);
+    const redErrors = unloadedDiags.filter((d) => d.severity === 'error');
+    expect(redErrors).toEqual([]);
+    const infoDiags = unloadedDiags.filter(
+      (d) => d.ruleId === 'unknown-module' && d.severity === 'info',
+    );
+    expect(infoDiags).toHaveLength(2);
+    expect(infoDiags[0]?.message).toContain('Collection metadata not loaded');
   });
 
   it('flags unknown-param, missing-required-param, invalid-choice, param-type-mismatch, and recursive suboptions', () => {
