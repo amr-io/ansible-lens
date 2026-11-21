@@ -9,12 +9,17 @@ import {
   type LanguageClientOptions,
   type ServerOptions,
 } from 'vscode-languageclient/node.js';
-import type { DiagnosticsInfoReport, ServerSettings } from '@ansible-lens/server';
+import type {
+  DiagnosticsInfoReport,
+  DocsCtrlClickBehavior,
+  ServerSettings,
+} from '@ansible-lens/server';
 import { shouldActivateForDocument, workspaceHasAnsibleCfg } from './activation.js';
 import {
   GET_MODULE_DOCS_REQUEST,
   MODULE_DOCS_SCHEME,
   ModuleDocsContentProvider,
+  openModuleDocsInBrowser,
   showRenderedDocsPreview,
 } from './docs-provider.js';
 import { evaluateJinjaBraceAutoSpace } from './jinja-autospace.js';
@@ -91,8 +96,12 @@ function readWorkspaceSettings(): ServerSettings {
     'lint.profile',
     'moderate',
   );
+  const docsCtrlClickBehavior = cfg.get<DocsCtrlClickBehavior>(
+    'docs.ctrlClickBehavior',
+    'renderedPreview',
+  );
   return {
-    documentLinksEnabled: cfg.get<boolean>('documentLinks.enabled', false),
+    docsCtrlClickBehavior,
     lint: {
       enabled: cfg.get<boolean>('lint.enabled', true),
       profile,
@@ -448,16 +457,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-      const renderPreview = vscode.workspace
+      const behavior = vscode.workspace
         .getConfiguration('ansibleLens')
-        .get<boolean>('docs.openRenderedPreview', true);
-      if (!renderPreview) {
+        .get<DocsCtrlClickBehavior>('docs.ctrlClickBehavior', 'renderedPreview');
+      if (behavior === 'disabled') {
         return;
       }
       try {
-        await showRenderedDocsPreview(editor);
+        if (behavior === 'openInBrowser') {
+          await openModuleDocsInBrowser(editor);
+        } else {
+          await showRenderedDocsPreview(editor);
+        }
       } catch (error) {
-        logger.warn('Failed to open rendered docs preview', {
+        logger.warn('Failed to handle module docs Ctrl+Click action', {
+          behavior,
           error: error instanceof Error ? error.message : String(error),
         });
       }

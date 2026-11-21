@@ -1,6 +1,6 @@
 # Ansible Lens — Clean-Room Lint & Project Integrity Rules Reference
 
-All 23 rules in **Ansible Lens** are implemented clean-room in pure TypeScript under the **MIT License** (zero Python, zero `ansible-lint`, zero GPL code). Every rule runs in memory in under 20ms and supports per-rule severity overrides via `ansibleLens.lint.rules`.
+All 24 rules in **Ansible Lens** are implemented clean-room in pure TypeScript under the **MIT License** (zero Python, zero `ansible-lint`, zero GPL code). Every rule runs in memory in under 20ms and supports per-rule severity overrides via `ansibleLens.lint.rules`.
 
 ---
 
@@ -24,8 +24,8 @@ In your VS Code `settings.json`:
 
 - **`minimal`**: Syntax and schema correctness only (`yaml-syntax`, `unknown-module`, `unknown-param`, `missing-required-param`, `invalid-choice`, `param-type-mismatch`, `duplicate-keys`).
 - **`basic`**: All `minimal` rules plus security, idempotency, and undefined-variable checks (excludes `var-naming[no-role-prefix]`).
-- **`moderate` (default)**: All 23 lint and project integrity rules at their default severities.
-- **`production`**: All 23 rules enabled, with all `warning`-level diagnostics elevated to `error`.
+- **`moderate` (default)**: All 24 lint and project integrity rules at their default severities.
+- **`production`**: All 24 rules enabled, with all `warning`-level diagnostics elevated to `error`.
 
 ---
 
@@ -318,7 +318,7 @@ Flags Jinja2 variables in playbooks, tasks, and `.j2` templates that are not def
 
 - `item`, `ansible_loop`, and custom `loop_control.loop_var` identifiers
 - Ansible magic variables (`hostvars`, `groups`, `group_names`, `inventory_hostname`, `playbook_dir`, `role_path`, `omit`, etc.) and `ansible_*` facts
-- Jinja2 keywords, builtins (`range`, `dict`, `lookup`, `query`, `now`), and template-local `{% for x in ... %}` / `{% set x = ... %}` bindings
+- Jinja2 keywords (`raw`, `endraw`, `block`, `endblock`, `macro`, `endmacro`, `set`, `with`, `endwith`, `include`, `import`, `from`, `as`, `recursive`, `scoped`), `{% raw %}...{% endraw %}` blocks, builtins (`range`, `dict`, `lookup`, `query`, `now`), and template-local `{% for x in ... %}` / `{% set x = ... %}` bindings
 - Variables guarded by `| default(...)` / `| d(...)` or `is defined` / `is not defined`
 - User-configured `ansibleLens.lint.extraVars`
 
@@ -369,6 +369,10 @@ Flags `notify:` handler names that do not match any handler `name:` or `listen:`
 ### `missing-src-file` (`warning`)
 
 Flags static `src:` file references in `copy` or `template` tasks (without `remote_src: true`) that do not exist in role `files/` / `templates/` or playbook directories.
+
+### `missing-vars-file` (`warning`)
+
+Flags static file paths listed in play `vars_files:` (e.g. `../../version.yml`) that do not exist on disk relative to the playbook, Ansible root, or workspace root. Unreferenced external `vars_files` are also evicted immediately from the workspace variable graph.
 
 ### `unknown-inventory-host` (`warning`)
 

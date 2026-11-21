@@ -34,7 +34,6 @@ import {
   type CodeAction,
   type CompletionItem,
   type Diagnostic,
-  type DocumentLink,
   type Hover,
   type Location,
   type LocationLink,
@@ -94,8 +93,10 @@ export interface MetadataConfiguration {
   readonly manifestUrl?: string;
 }
 
+export type DocsCtrlClickBehavior = 'renderedPreview' | 'openInBrowser' | 'disabled';
+
 export interface ServerSettings {
-  readonly documentLinksEnabled?: boolean;
+  readonly docsCtrlClickBehavior?: DocsCtrlClickBehavior;
   readonly lint?: LintConfiguration;
   readonly metadata?: MetadataConfiguration;
   readonly ansibleRootPaths?: readonly string[];
@@ -117,7 +118,7 @@ export interface LanguageServiceOptions {
   readonly fs?: IWorkspaceFs;
   readonly logger?: ServerLogger;
   readonly workspaceRoots?: readonly string[];
-  readonly documentLinksEnabled?: boolean;
+  readonly docsCtrlClickBehavior?: DocsCtrlClickBehavior;
   readonly lintConfig?: LintConfiguration;
   readonly metadataConfig?: MetadataConfiguration;
   readonly ansibleRootPaths?: readonly string[];
@@ -135,7 +136,7 @@ interface IndexedDocumentEntry {
  * Pure, testable Ansible Language Service engine backing the LSP connection.
  *
  * Manages document indexing, Smart Hybrid Activation, cross-file variable graph,
- * inventory host/group parsing, diagnostics, completions, hovers, document links,
+ * inventory host/group parsing, diagnostics, completions, hovers,
  * go-to-definition, find-references, and code actions.
  */
 export class AnsibleLanguageService {
@@ -147,7 +148,7 @@ export class AnsibleLanguageService {
   private readonly workspaceRoots: string[] = [];
   private ansibleRootPaths: string[] = [];
   private variableGraph = new WorkspaceVariableGraph();
-  private documentLinksEnabled: boolean;
+  private docsCtrlClickBehavior: DocsCtrlClickBehavior;
   private lintEnabled = true;
   private lintProfile: 'minimal' | 'basic' | 'moderate' | 'production' = 'moderate';
   private lintRuleOverrides: Readonly<Record<string, LintSeverity | 'off'>> = {};
@@ -165,7 +166,7 @@ export class AnsibleLanguageService {
     ensureFallbackModulesLoaded(this.registry);
     this.fs = options?.fs ?? new NodeWorkspaceFs();
     this.logger = options?.logger ?? createServerLogger('AnsibleLanguageService');
-    this.documentLinksEnabled = options?.documentLinksEnabled ?? false;
+    this.docsCtrlClickBehavior = options?.docsCtrlClickBehavior ?? 'renderedPreview';
     this.cacheDir =
       options?.cacheDir ?? path.join(os.homedir(), '.cache', 'ansible-lens', 'metadata');
     this.fetcher = options?.fetcher ?? new NodeMetadataFetcher();
@@ -193,8 +194,12 @@ export class AnsibleLanguageService {
   }
 
   public applySettings(settings: ServerSettings): void {
-    if (typeof settings.documentLinksEnabled === 'boolean') {
-      this.setDocumentLinksEnabled(settings.documentLinksEnabled);
+    if (
+      settings.docsCtrlClickBehavior === 'renderedPreview' ||
+      settings.docsCtrlClickBehavior === 'openInBrowser' ||
+      settings.docsCtrlClickBehavior === 'disabled'
+    ) {
+      this.docsCtrlClickBehavior = settings.docsCtrlClickBehavior;
     }
     if (settings.lint) {
       this.setLintConfiguration(settings.lint);
@@ -383,12 +388,12 @@ export class AnsibleLanguageService {
     };
   }
 
-  public setDocumentLinksEnabled(enabled: boolean): void {
-    this.documentLinksEnabled = enabled;
+  public setDocsCtrlClickBehavior(behavior: DocsCtrlClickBehavior): void {
+    this.docsCtrlClickBehavior = behavior;
   }
 
-  public isDocumentLinksEnabled(): boolean {
-    return this.documentLinksEnabled;
+  public getDocsCtrlClickBehavior(): DocsCtrlClickBehavior {
+    return this.docsCtrlClickBehavior;
   }
 
   public getRegistry(): MetadataRegistry {
@@ -903,39 +908,6 @@ export class AnsibleLanguageService {
     return null;
   }
 
-  public getDocumentLinks(uri: string, text?: string): DocumentLink[] {
-    if (!this.documentLinksEnabled) {
-      return [];
-    }
-    const canonicalUri = normalizeDocumentUri(uri);
-    const docText = text ?? this.documents.get(canonicalUri)?.text;
-    if (docText === undefined) {
-      return [];
-    }
-    const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
-    const heuristic = evaluateAnsibleHeuristic(canonicalUri, docText, hasCfg);
-    if (!heuristic.isAnsible) {
-      return [];
-    }
-
-    const ast = parseDocumentWithFallback(canonicalUri, docText, heuristic.kind, this.registry);
-    const links: DocumentLink[] = [];
-
-    for (const task of collectAllTasks(ast)) {
-      const mod = this.registry.getModule(task.moduleName);
-      if (!mod) {
-        continue;
-      }
-      links.push({
-        range: toLspRange(task.moduleRange),
-        target: mod.docUrl,
-        tooltip: `Open ${mod.fqcn} docs`,
-      });
-    }
-
-    return links;
-  }
-
   /**
    * Returns a full rendered Markdown docs page for a module (by FQCN or short name),
    * served to the client's `ansible-lens-docs:` TextDocumentContentProvider.
@@ -1026,16 +998,18 @@ export class AnsibleLanguageService {
     }
 
     // 3. Module name -> read-only rendered docs page (`ansible-lens-docs:` virtual document)
-    for (const moduleTask of collectAllTasks(ast)) {
-      if (isPositionInRange(position, moduleTask.moduleRange)) {
-        const mod = this.registry.getModule(moduleTask.moduleName);
-        if (mod || moduleTask.isFqcn) {
-          return [
-            {
-              uri: buildModuleDocsUri(mod ? mod.fqcn : moduleTask.moduleName),
-              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-            },
-          ];
+    if (this.docsCtrlClickBehavior !== 'disabled') {
+      for (const moduleTask of collectAllTasks(ast)) {
+        if (isPositionInRange(position, moduleTask.moduleRange)) {
+          const mod = this.registry.getModule(moduleTask.moduleName);
+          if (mod || moduleTask.isFqcn) {
+            return [
+              {
+                uri: buildModuleDocsUri(mod ? mod.fqcn : moduleTask.moduleName),
+                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+              },
+            ];
+          }
         }
       }
     }

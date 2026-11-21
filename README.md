@@ -22,7 +22,7 @@ Ansible Lens delivers sub-20ms IntelliSense, Pylance-style hover documentation, 
 ## Documentation Guides
 
 - **[Clean-Room Lint & Project Integrity Rules Reference (`docs/rules.md`)](./docs/rules.md)** — Every rule ID, default severity, Bad vs. Good YAML examples, 1-click Quick-Fixes, and profile configuration.
-- **[Configuration Reference (`docs/configuration.md`)](./docs/configuration.md)** — All `ansibleLens.*` settings (`lint.*`, `metadata.*`, `jinja.autoSpaceBraces`, `ansible.rootPaths`, `documentLinks.enabled`) and commands.
+- **[Configuration Reference (`docs/configuration.md`)](./docs/configuration.md)** — All `ansibleLens.*` settings (`lint.*`, `metadata.*`, `jinja.autoSpaceBraces`, `ansible.rootPaths`, `docs.ctrlClickBehavior`) and commands.
 - **[Troubleshooting Guide (`docs/troubleshooting.md`)](./docs/troubleshooting.md)** — Windows & nested monorepos, `redhat.vscode-yaml` / `redhat.ansible` coexistence, and air-gapped `manifestUrl` mirror setup.
 - **[Architecture Overview (`ARCHITECTURE.md`)](./ARCHITECTURE.md)** & **[Architecture Decision Records (`docs/adr/`)](./docs/adr/)**.
 

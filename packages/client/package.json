@@ -98,15 +98,15 @@
           "default": [],
           "description": "Explicit Ansible project root directories (relative to the workspace root or absolute) for monorepos that do not contain an `ansible.cfg`."
         },
-        "ansibleLens.documentLinks.enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable clickable document links (underlines) on Ansible module names. Defaults to false so playbooks have zero permanent underlines; hover tooltips always include clickable official documentation links."
-        },
-        "ansibleLens.docs.openRenderedPreview": {
-          "type": "boolean",
-          "default": true,
-          "description": "When Ctrl+Click (Go to Definition) on a module name opens its read-only ansible-lens-docs page, show it as a rendered Markdown preview instead of raw Markdown."
+        "ansibleLens.docs.ctrlClickBehavior": {
+          "type": "string",
+          "enum": [
+            "renderedPreview",
+            "openInBrowser",
+            "disabled"
+          ],
+          "default": "renderedPreview",
+          "description": "Controls what happens when you Ctrl+Click (Go to Definition) on an Ansible module name: `renderedPreview` opens rendered Markdown docs inside VS Code, `openInBrowser` opens docs.ansible.com directly in your browser, and `disabled` disables module Ctrl+Click."
         }
       }
     },
