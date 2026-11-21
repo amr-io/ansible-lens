@@ -10,7 +10,7 @@ import type {
 } from '../contracts/types.js';
 
 export const DEFAULT_MANIFEST_URL =
-  'https://github.com/amr-vibe/ansible-lens/releases/download/metadata-latest/manifest.json';
+  'https://github.com/amr-io/ansible-lens/releases/download/metadata-latest/manifest.json';
 
 /**
  * Injectable remote fetcher interface for downloading `manifest.json` and `.json.gz` collection packs.

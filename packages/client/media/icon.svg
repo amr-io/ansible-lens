@@ -1,19 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Ansible Lens Icon">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0F172A" />
-      <stop offset="100%" stop-color="#1E293B" />
-    </linearGradient>
-    <linearGradient id="lensGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#38BDF8" />
-      <stop offset="50%" stop-color="#6366F1" />
-      <stop offset="100%" stop-color="#A855F7" />
-    </linearGradient>
-  </defs>
-  <rect x="6" y="6" width="116" height="116" rx="26" fill="url(#bgGrad)" stroke="#334155" stroke-width="3" />
-  <circle cx="58" cy="58" r="32" fill="none" stroke="url(#lensGrad)" stroke-width="8" />
-  <circle cx="58" cy="58" r="21" fill="#0F172A" stroke="#38BDF8" stroke-opacity="0.35" stroke-width="2" />
-  <path d="M48 48 L68 58 L48 68 Z" fill="#38BDF8" opacity="0.85" />
-  <path d="M46 42 A22 22 0 0 1 70 42" fill="none" stroke="#BAE6FD" stroke-width="3" stroke-linecap="round" opacity="0.7" />
-  <line x1="82" y1="82" x2="104" y2="104" stroke="url(#lensGrad)" stroke-width="11" stroke-linecap="round" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="512" height="512">
+  <!--
+    Circle & Letter A strictly centered at (128, 128)
+    Ring: r_in = 66.78, r_out = 79.04, gap = 5.64, corner radius = 1.30
+    A bounding box: [87.04, 93.00] .. [168.96, 163.00] -> center = (128.00, 128.00)
+  -->
+  <rect width="256" height="256" rx="48" fill="#111827" />
+  <g id="lens">
+    <!-- Left white semicircular arc (6 o'clock -> 12 o'clock) -->
+    <path
+      d="M 124.99 205.68 A 1.30 1.30 0 0 1 123.64 206.92 A 79.04 79.04 0 0 1 123.64 49.08 A 1.30 1.30 0 0 1 124.99 50.32 L 125.37 59.97 A 1.30 1.30 0 0 1 124.12 61.33 A 66.78 66.78 0 0 0 124.12 194.67 A 1.30 1.30 0 0 1 125.37 196.03 Z"
+      fill="#FFFFFF"
+    />
+    <!-- Top-right white quarter arc (12 o'clock -> 3 o'clock) -->
+    <path
+      d="M 131.01 50.32 A 1.30 1.30 0 0 1 132.36 49.08 A 79.04 79.04 0 0 1 206.92 123.64 A 1.30 1.30 0 0 1 205.68 124.99 L 196.03 125.37 A 1.30 1.30 0 0 1 194.67 124.12 A 66.78 66.78 0 0 0 131.88 61.33 A 1.30 1.30 0 0 1 130.63 59.97 Z"
+      fill="#FFFFFF"
+    />
+    <!-- Bottom-right red quarter arc (3 o'clock -> 6 o'clock) -->
+    <path
+      d="M 205.68 131.01 A 1.30 1.30 0 0 1 206.92 132.36 A 79.04 79.04 0 0 1 132.36 206.92 A 1.30 1.30 0 0 1 131.01 205.68 L 130.63 196.03 A 1.30 1.30 0 0 1 131.88 194.67 A 66.78 66.78 0 0 0 194.67 131.88 A 1.30 1.30 0 0 1 196.03 130.63 Z"
+      fill="#F40004"
+    />
+    <!-- Two-tone red handle aligned at 45 deg through (128, 128), inner 5.64 gap & outer 2.00 gap -->
+    <path d="M 187.88 187.88 A 84.68 84.68 0 0 0 198.03 175.61 L 249.74 227.33 A 46.00 46.00 0 0 1 240.53 240.53 Z" fill="#E81E24" />
+    <path d="M 175.61 198.03 A 84.68 84.68 0 0 0 187.88 187.88 L 240.53 240.53 A 46.00 46.00 0 0 1 227.33 249.74 Z" fill="#B70709" />
+  </g>
+
+  <!-- Stylized A strictly centered at (128, 128) -->
+  <polygon
+    id="letter-a"
+    points="120.34,93.00 135.66,93.00 168.96,163.00 152.58,163.00 127.81,108.97 112.56,142.37 126.84,133.44 132.27,144.83 102.70,163.00 87.04,163.00"
+    fill="#FFFFFF"
+  />
 </svg>

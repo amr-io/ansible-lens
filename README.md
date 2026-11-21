@@ -1,183 +1,91 @@
 # Ansible Lens
 
-**Zero-dependency, cross-platform, static-metadata Ansible Language Server & VS Code Extension.**
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/amr-io/ansible-lens/badge)](https://scorecard.dev/viewer/?uri=github.com/amr-io/ansible-lens)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-Ansible Lens delivers sub-20ms IntelliSense, Pylance-style hover documentation, cross-file variable precedence resolution, `register:` return-value type inference, project integrity diagnostics, and 1-click Quick-Fix linting in pure TypeScript—with **zero Python**, **zero WSL**, and **zero Docker** required at runtime.
+**Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2 — zero Python, WSL, or Docker required.**
+
+---
+
+## Why Ansible Lens?
+
+Editing Ansible playbooks shouldn't require installing Python virtual environments, WSL2, or Docker containers just to get hover docs, autocomplete, and linting. **Ansible Lens** is a pure TypeScript, zero-dependency Language Server & VS Code extension powered by pre-compiled static collection metadata packs. It works identically out of the box on **Windows, macOS, and Linux** in milliseconds.
 
 ---
 
 ## Key Features
 
-- **Zero Python / WSL / Docker Runtime Dependencies:** Runs natively on Windows, macOS, and Linux in pure Node.js/TypeScript. Never invokes `ansible-playbook`, `ansible-lint`, or external Python subprocesses while you edit.
-- **Sub-20ms Fault-Tolerant Parsing & Linting:** Powered by a Concrete Syntax Tree (CST) YAML parser (`yaml` with `keepSourceTokens: true`) paired with a fault-tolerant Jinja2 lexical scanner (`{{ ... }}`, `{% ... %}`, `{# ... #}`, and implicit conditionals in `when:`, `changed_when:`, `failed_when:`, `until:`). Half-typed playbooks and unclosed Jinja braces never crash the Language Server.
-- **Pylance-Style Hover & `Ctrl+Click` Module Docs (Zero Permanent Underlines):** Rich Markdown hover cards and read-only `ansible-lens-docs:` virtual documentation pages on `Ctrl+Click` with module summaries, parameter tables, defaults, valid `choices`, return values, and clickable `https://docs.ansible.com/...` deep links at the top.
-- **`register:` Return-Value Type Inference (`loop:`-Aware):** Tracks `register: my_result` bindings, resolves module `RETURN` schemas plus common task fields (`failed`, `changed`, `skipped`, `rc`, `stdout`, `stdout_lines`, `stderr`, `stderr_lines`, `msg`), supports nested partial prefix completions (e.g. `webapp_version_file.stat.e` -> `exists`) and multi-line `when:` lists, and automatically wraps schemas under `my_result.results[].<field>` when `loop:` or `with_*:` is present.
-- **22-Level Cross-File Variable Precedence Graph & `.j2` Template Intelligence:** Indexes variables across role `defaults/main.yml`, `vars/main.yml`, `group_vars/`, `host_vars/`, inventory files, play `vars:`, relative `vars_files:` (e.g. `../../versions.yml`), `include_vars:`, block/task `vars:`, `set_fact`, and `register:`, providing full completions, 22-level precedence hover, Go-to-Definition, `undefined-variable` detection, and smart `{{ | }}` auto-spacing inside both Ansible YAML and `*.j2` templates.
-- **Nested Monorepo `ansible.cfg` Root Discovery & Project Integrity Checker:** Walks upward from each document toward the workspace root to find the nearest `ansible.cfg` (parsing `roles_path` and `inventory`) or Ansible directory layout, validating role references, `roles/<name>/tasks/main.yml`, `notify:` handler targets (with full multi-word `LocationLink` highlighting), `copy`/`template` `src:` files, and `hosts:` targets.
-- **Smart Hybrid Activation (`redhat.vscode-yaml` Coexistence):** Dynamically activates on Ansible YAML and `*.j2` files while explicitly ignoring Kubernetes manifests (`apiVersion:` + `kind:`), Docker Compose (`services:`), and GitHub Actions workflows (`on:` + `jobs:`). Injects lightweight MIT Jinja2 syntax highlighting into `source.yaml`.
-- **Bundled `ansible.builtin` + 90+ Silent Auto-Downloaded Collection Metadata Packs:** Bundles `ansible.builtin.json.gz` offline out of the box and silently lazy-downloads **90+ Ansible community collection packs** (`ansible.posix`, `community.general`, `community.docker`, `community.crypto`, `ansible.windows`, `amazon.aws`, `kubernetes.core`, `community.mysql`, `community.postgresql`, `ansible.utils`, and 80+ more from the `metadata-latest` release) in the background on first FQCN encounter with SHA-256 verification against `manifest.json`, plus static `.py` docstring extraction for local `library/` and `collections/` modules.
+- **Zero Python, WSL, or Docker:** Runs natively in pure Node.js/TypeScript on Windows, macOS, and Linux. Never spawns `ansible-playbook` or `ansible-lint` subprocesses while you type.
+- **Instant (<20ms) Fault-Tolerant Linting:** Concrete Syntax Tree (CST) YAML + Jinja2 scanner with 24 clean-room MIT-licensed rules, 1-click Quick-Fixes (`Convert File to FQCN`, Levenshtein *"Did you mean?"*, `var-naming[no-role-prefix]`), and debounced incremental revalidation.
+- **Pylance-Style Hover & `Ctrl+Click` Module Docs:** Rich Markdown hover cards with parameter tables, defaults, `choices`, and return schemas — plus configurable `Ctrl+Click` (`renderedPreview`, `openInBrowser`, or `disabled`) with zero permanent underlines.
+- **`register:` Return-Value Type Inference (`loop:`-Aware):** Autocompletes registered fields (e.g. `webapp_version_file.stat.exists`, `.rc`, `.stdout`, and `.results[].*` when `loop:` is used) across tasks, multi-line `when:` lists, and `.j2` templates.
+- **22-Level Cross-File Variable Intelligence & `.j2` Templates:** Tracks `defaults/`, `vars/`, `group_vars/`, `host_vars/`, relative `vars_files:` (with `missing-vars-file` validation & cache eviction), `include_vars:`, inventory, `set_fact:`, and `register:`, with scoped completion ranking (`0_` role-local → `1_` shared → `2_` other roles → `3_` magic vars) and smart `{{ | }}` auto-spacing.
+- **Nested Monorepo `ansible.cfg` Discovery & Project Integrity:** Walks upward to locate `ansible.cfg` (`roles_path`, `inventory`), validates missing roles/handlers/templates/`vars_files`, and prefers same-role handlers on `notify:` Go-to-Definition.
+- **Smart Hybrid Activation:** Activates on Ansible YAML & `*.j2` templates while ignoring Kubernetes manifests, Docker Compose, and GitHub Actions workflows — coexisting cleanly with `redhat.vscode-yaml`.
+- **Bundled `ansible.builtin` + 90+ Silent Auto-Downloaded Collections:** Works offline out of the box and lazily downloads 90+ Ansible community collection packs (`ansible.posix`, `community.general`, `community.docker`, `amazon.aws`, `kubernetes.core`, etc.) with SHA-256 verification against `manifest.json`.
 
 ---
 
-## Documentation Guides
+## Comparison: Ansible Lens vs. `redhat.ansible`
 
-- **[Clean-Room Lint & Project Integrity Rules Reference (`docs/rules.md`)](./docs/rules.md)** — Every rule ID, default severity, Bad vs. Good YAML examples, 1-click Quick-Fixes, and profile configuration.
-- **[Configuration Reference (`docs/configuration.md`)](./docs/configuration.md)** — All `ansibleLens.*` settings (`lint.*`, `metadata.*`, `jinja.autoSpaceBraces`, `ansible.rootPaths`, `docs.ctrlClickBehavior`) and commands.
-- **[Troubleshooting Guide (`docs/troubleshooting.md`)](./docs/troubleshooting.md)** — Windows & nested monorepos, `redhat.vscode-yaml` / `redhat.ansible` coexistence, and air-gapped `manifestUrl` mirror setup.
-- **[Architecture Overview (`ARCHITECTURE.md`)](./ARCHITECTURE.md)** & **[Architecture Decision Records (`docs/adr/`)](./docs/adr/)**.
-
----
-
-## Architecture
-
-Ansible Lens enforces strict unidirectional dependencies (`packages/client` -> `packages/server` -> `packages/core`), keeping all parsing, metadata resolution, workspace intelligence, and linting 100% pure TypeScript with zero `vscode` imports in `packages/core`:
-
-```mermaid
-flowchart LR
-  subgraph VSCode["VS Code Client (packages/client)"]
-    ACT["Smart Hybrid Activation + {{ | }} Auto-Space"]
-    TM["MIT Jinja2 Injection Grammar"]
-    LC["LanguageClient"]
-  end
-
-  subgraph LSP["LSP Server (packages/server)"]
-    SRV["LSP Handlers (Hover, Completion, Diagnostics, CodeAction, Definition, References, DocumentLink)"]
-  end
-
-  subgraph CORE["Pure TypeScript Engine (packages/core)"]
-    PAR["Fault-Tolerant YAML CST + Jinja2 Parser"]
-    META["Static Metadata Registry (90+ .json.gz Packs + SHA-256 + .py Extractor)"]
-    INT["Workspace Intelligence (register: Inference, 22-Level Vars, Integrity)"]
-    LINT["Clean-Room MIT Linter & Quick-Fixes"]
-  end
-
-  ACT --> LC
-  TM --> VSCode
-  LC <-->|JSON-RPC / stdio| SRV
-  SRV --> PAR
-  SRV --> META
-  SRV --> INT
-  SRV --> LINT
-  INT --> PAR
-  INT --> META
-  LINT --> PAR
-  LINT --> META
-  LINT --> INT
-```
+| Feature | **Ansible Lens** (`amr-io.ansible-lens`) | **Red Hat Ansible** (`redhat.ansible`) |
+| :--- | :--- | :--- |
+| **Native Windows support (no WSL/Docker)** | **Yes — 100% native** | Requires WSL or Execution Environment container |
+| **Python / `ansible-core` / `ansible-lint` required** | **Zero** | Required for linting & full module docs |
+| **Lint latency (300-line playbook)** | **~10.7 ms** (in-process) | ~2,622 ms (Python `ansible-lint` subprocess) |
+| **Smart `redhat.vscode-yaml` coexistence** | **Yes** (auto-detects Ansible vs. K8s/GHA/Compose) | Requires changing language mode to `ansible` |
+| **`register:` return-value autocomplete** | **Yes** (`loop:`-aware & nested `.stat.*`) | Limited |
+| **22-level variable precedence hover** | **Yes** | No |
+| **`.j2` template IntelliSense & `{{ \| }}` auto-space** | **Yes** | Limited |
+| **License** | **MIT** (clean-room TypeScript) | GPL-3.0 (`ansible-lint` / `ansible-core`) |
+| **Telemetry** | **Zero telemetry** | Optional Red Hat telemetry |
 
 ---
 
-## Clean-Room Lint Rules & Quick-Fixes
+## Verified Benchmarks
 
-All 23 lint and project integrity rules are implemented clean-room in pure TypeScript under the **MIT License** (zero GPL code). See **[`docs/rules.md`](./docs/rules.md)** for full examples and configuration:
+Measured on GitHub Actions `ubuntu-latest` (4 vCPU AMD EPYC 9V45, 15.6 GB RAM, Node.js `v22.23.5`, `ansible-lint 26.11.0` / `ansible-core 2.21.6`) over 5 runs on the same 302-line (49-task) playbook via [`.github/workflows/benchmarks.yml`](./.github/workflows/benchmarks.yml) ([latest run](https://github.com/amr-io/ansible-lens/actions/runs/44958397058)):
 
-| Rule ID                      | Severity       | Description                                                                                                                         | Quick-Fix Available                                    |
-| ---------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `yaml-syntax`                | `error`        | Reports non-fatal YAML/Jinja2 syntax issues without halting analysis                                                                | —                                                      |
-| `unknown-module`             | `error`/`info` | Flags unknown modules; emits `info` and triggers silent auto-download for unloaded collection FQCNs                                 | Yes ("Replace with `<fqcn>`" via Levenshtein distance) |
-| `unknown-param`              | `error`        | Flags unrecognized module parameters                                                                                                | Yes (suggests closest parameter name / alias)          |
-| `missing-required-param`     | `error`        | Detects missing required module options                                                                                             | Yes (inserts missing parameter stub)                   |
-| `invalid-choice`             | `error`        | Validates parameter values against allowed `choices`                                                                                | Yes (offers valid choice replacements)                 |
-| `param-type-mismatch`        | `warning`      | Checks static value types against module option types (`bool`, `int`, `list`, `dict`, `str`)                                        | Yes (coerces boolean/integer/list value)               |
-| `fqcn`                       | `warning`      | Encourages Fully Qualified Collection Names (e.g. `ansible.builtin.copy` instead of `copy`)                                         | Yes (1-click expand short name or convert whole file)  |
-| `name-missing`               | `warning`      | Flags tasks missing a descriptive `name:` field                                                                                     | Yes (inserts `name:` attribute)                        |
-| `no-changed-when`            | `warning`      | Flags `command`/`shell` tasks missing `changed_when:` idempotency declaration                                                       | Yes (inserts `changed_when: false`)                    |
-| `command-instead-of-module`  | `warning`      | Advises using dedicated Ansible modules (`apt`, `dnf`, `git`, `curl`/`get_url`, `systemctl`/`service`) instead of `command`/`shell` | Yes (replaces with dedicated module FQCN)              |
-| `package-latest`             | `warning`      | Warns against `state: latest` in package tasks for reproducible deployments                                                         | Yes (replaces `latest` with `present`)                 |
-| `risky-file-permissions`     | `warning`      | Flags file/copy/template tasks missing explicit `mode:` or using overly permissive modes (`0777`, `777`)                            | Yes (inserts safe `mode: '0644'` / `'0755'`)           |
-| `deprecated-module`          | `warning`      | Surfaces deprecation timeline and replacement module from static metadata                                                           | Yes (replaces with `alternative` FQCN when available)  |
-| `hardcoded-secret`           | `warning`      | Detects plaintext secret-like keys (`password`, `token`, `api_key`, `secret`, `private_key`) without Jinja/vault                    | Yes (replaces with `{{ vault_<key> }}` placeholder)    |
-| `yaml-truthy`                | `warning`      | Flags YAML 1.1 legacy truthy literals (`yes`, `no`, `on`, `off`, `TRUE`, `FALSE`)                                                   | Yes (normalizes to `true` / `false`)                   |
-| `duplicate-keys`             | `error`        | Detects duplicate keys inside YAML mappings via CST inspection                                                                      | —                                                      |
-| `undefined-variable`         | `warning`      | Flags Jinja2 variables not defined in the 22-level workspace variable graph (with smart zero-noise exclusions)                      | Yes ("Did you mean `<var>`?" via Levenshtein distance) |
-| `var-naming[no-role-prefix]` | `warning`      | Warns when role variables in `defaults/`, `vars/`, or `tasks/` (`register:`/`set_fact:`) lack the `<role>_` prefix                  | Yes ("Rename to `<role>_<var>`")                       |
-| `missing-role`               | `error`        | Verifies referenced roles exist in `ansible.cfg` `roles_path` or workspace `roles/`                                                 | —                                                      |
-| `missing-role-tasks`         | `error`        | Checks that referenced roles contain `tasks/main.yml`                                                                               | —                                                      |
-| `missing-handler`            | `error`        | Verifies `notify:` targets match defined handlers in plays or roles                                                                 | —                                                      |
-| `missing-src-file`           | `warning`      | Verifies `copy`/`template` `src:` paths resolve in workspace files/templates                                                        | —                                                      |
-| `unknown-inventory-host`     | `warning`      | Validates play `hosts:` patterns against parsed workspace inventory groups/hosts                                                    | —                                                      |
+| Tool | Runtime | Median | 5-Run Timings |
+| :--- | :--- | ---: | :--- |
+| **Ansible Lens** (in-process LSP) | Pure TypeScript / Node.js | **10.73 ms** | `9.11, 16.38, 10.73, 11.81, 6.47 ms` |
+| **ansible-lint** (CLI) | Python | **2,622.4 ms** | `3090.0, 2606.4, 2862.1, 2576.5, 2622.4 ms` |
+
+**Result:** **~244× faster** median analysis time with zero Python subprocess overhead.
 
 ---
 
-## Installation & Usage
+## Quick Start
 
-### Installing from GitHub Releases
-
-1. Download the latest `ansible-lens-<version>.vsix` and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/amr-vibe/ansible-lens/releases).
-2. Verify the download checksum:
-
-   ```bash
-   sha256sum -c SHA256SUMS.txt
-   ```
-
+1. Download the latest `ansible-lens-<version>.vsix`, `sbom.cdx.json`, and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/amr-io/ansible-lens/releases).
+2. Verify the checksum (`sha256sum -c SHA256SUMS.txt`) and SLSA build provenance (`gh attestation verify ansible-lens-<version>.vsix --repo amr-io/ansible-lens`).
 3. Install in VS Code:
-
    ```bash
    code --install-extension ansible-lens-<version>.vsix
    ```
-
-### Extension Commands
-
-Open the VS Code Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
-
-- `Ansible Lens: Open Official Docs` — Opens official Ansible documentation in your browser.
-- `Ansible Lens: Refresh Collection Metadata` — Re-indexes playbooks, roles, inventories, variables, `.j2` templates, and metadata packs.
-- `Ansible Lens: Convert File to FQCN` — Converts all short module names in the active file to canonical FQCNs.
-- `Ansible Lens: Copy Diagnostics Info` — Copies OS, VS Code version, extension version, detected `ansibleRoot`, loaded collection packs, and recent errors to the clipboard.
+4. Open any Ansible playbook, role, or `.j2` template — Ansible Lens activates automatically with zero configuration.
 
 ---
 
-## Development & Testing
+## Documentation
 
-### Prerequisites
-
-- **Node.js** `>= 20` (CI targets Node.js `22`)
-- **npm** `>= 10`
-
-### Local Setup & Verification
-
-```bash
-git clone https://github.com/amr-vibe/ansible-lens.git
-cd ansible-lens
-npm ci
-
-# Build all workspace packages
-npm run build
-
-# Strict TypeScript type-checking
-npm run typecheck
-
-# Flat ESLint (--max-warnings=0)
-npm run lint
-
-# Prettier formatting check
-npm run format:check
-
-# Unit, fuzz, <20ms performance benchmark, and LSP integration tests with V8 coverage
-npm test
-
-# Package the VS Code extension (.vsix)
-npm run package:vsix
-```
-
-### Rebuilding Static Metadata Packs (Linux / CI)
-
-To regenerate `.json.gz` collection packs and SHA-256 `manifest.json` using `ansible-doc --metadata-dump`:
-
-```bash
-pip install ansible-core
-npm run build --workspace=packages/core
-npm run build --workspace=scripts/metadata-builder
-node scripts/metadata-builder/dist/index.js --out-dir dist-metadata
-```
+- **[Lint & Project Integrity Rules (`docs/rules.md`)](./docs/rules.md)** — All 24 clean-room rules, profiles, Bad vs. Good examples, and Quick-Fixes.
+- **[Configuration Reference (`docs/configuration.md`)](./docs/configuration.md)** — Every `ansibleLens.*` setting (`lint.*`, `metadata.*`, `jinja.autoSpaceBraces`, `ansible.rootPaths`, `docs.ctrlClickBehavior`) and command.
+- **[Troubleshooting Guide (`docs/troubleshooting.md`)](./docs/troubleshooting.md)** — Windows & nested monorepos, `redhat.vscode-yaml` coexistence, and air-gapped `manifestUrl` mirror setup.
+- **[Architecture (`ARCHITECTURE.md`)](./ARCHITECTURE.md)** & **[ADRs (`docs/adr/`)](./docs/adr/)** — Design decisions and monorepo structure.
 
 ---
 
-## License & Governance
+## Privacy & Supply-Chain Security
 
-- Licensed under the [MIT License](./LICENSE).
-- Third-party attributions are documented in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
-- Read [CONTRIBUTING.md](./CONTRIBUTING.md), [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md), and [SECURITY.md](./SECURITY.md) before opening a pull request.
+- **Zero Telemetry:** Ansible Lens collects zero analytics, zero crash reports, and makes no outbound network requests other than optional SHA-256-verified collection metadata pack downloads (configurable or disableable via `ansibleLens.metadata.autoDownload`).
+- **Verifiable Releases:** Every GitHub Release ships with a CycloneDX SBOM (`sbom.cdx.json`), `SHA256SUMS.txt`, and GitHub SLSA Build Provenance attestation.
+
+---
+
+## License
+
+Licensed under the [MIT License](./LICENSE). See [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 ---
 
