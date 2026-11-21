@@ -22,17 +22,29 @@ const JINJA_KEYWORDS = new Set([
   'for',
   'endfor',
   'set',
+  'endset',
+  'raw',
+  'endraw',
   'block',
   'endblock',
   'macro',
   'endmacro',
+  'call',
+  'endcall',
+  'filter',
+  'endfilter',
   'include',
   'import',
   'from',
   'as',
   'with',
+  'endwith',
   'without',
   'context',
+  'recursive',
+  'scoped',
+  'ignore',
+  'missing',
   'true',
   'false',
   'none',
@@ -426,8 +438,16 @@ export function tokenizeJinjaBlock(
   };
 }
 
+/** Returns true when a statement block's content is exactly the `raw` or `endraw` tag. */
+function isStatementTagName(rawBlock: string, tagName: 'raw' | 'endraw'): boolean {
+  const { content } = stripBlockDelimiters(rawBlock, 'statement');
+  return content.trim() === tagName;
+}
+
 /**
  * Extracts all explicit Jinja2 blocks (`{{ ... }}`, `{% ... %}`, `{# ... #}`) from an arbitrary text slice.
+ * Completely skips content inside `{% raw %}...{% endraw %}` blocks so Go/Docker/Helm template literals
+ * inside raw sections are never tokenized as Ansible Jinja variables.
  * Handles unclosed blocks cleanly while preserving exact source coordinates.
  */
 export function extractJinjaBlocksFromText(
@@ -441,6 +461,7 @@ export function extractJinjaBlocksFromText(
 
   let i = 0;
   const len = text.length;
+  let insideRawBlock = false;
 
   while (i < len) {
     const ch = text[i];
@@ -461,7 +482,6 @@ export function extractJinjaBlocksFromText(
 
       if (kind !== undefined) {
         const startIdx = i;
-        const startPos = advancePosition(basePos, text.slice(0, startIdx));
         let cursor = i + 2;
         let inQuote: string | undefined;
         let foundClose = false;
@@ -503,6 +523,26 @@ export function extractJinjaBlocksFromText(
         }
 
         const raw = text.slice(startIdx, endIdx);
+        if (insideRawBlock) {
+          if (kind === 'statement' && isStatementTagName(raw, 'endraw')) {
+            insideRawBlock = false;
+          }
+          i = Math.max(endIdx, startIdx + 2);
+          continue;
+        }
+
+        if (kind === 'statement' && isStatementTagName(raw, 'raw')) {
+          insideRawBlock = true;
+          i = Math.max(endIdx, startIdx + 2);
+          continue;
+        }
+
+        if (kind === 'statement' && isStatementTagName(raw, 'endraw')) {
+          i = Math.max(endIdx, startIdx + 2);
+          continue;
+        }
+
+        const startPos = advancePosition(basePos, text.slice(0, startIdx));
         blocks.push(tokenizeJinjaBlock(raw, kind, startPos.offset, startPos.line, startPos.column));
         i = Math.max(endIdx, startIdx + 2);
         continue;
