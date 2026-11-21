@@ -1018,6 +1018,22 @@ const BUILTIN_EXEMPT_VARIABLES: ReadonlySet<string> = new Set([
   'cycler',
   'joiner',
   'namespace',
+  'raw',
+  'endraw',
+  'block',
+  'endblock',
+  'macro',
+  'endmacro',
+  'set',
+  'endset',
+  'with',
+  'endwith',
+  'include',
+  'import',
+  'from',
+  'as',
+  'recursive',
+  'scoped',
 ]);
 
 /** Extracts `<role>` if `uri` is inside `roles/<role>/(defaults|vars|tasks)/...`. */
@@ -1115,7 +1131,7 @@ function checkRoleVariablePrefixNaming(
   }
 }
 
-/** Collects local loop/set identifier bindings declared inside `{% for x in ... %}` or `{% set x = ... %}`. */
+/** Collects local loop/set/block/macro/import identifier bindings declared inside Jinja2 statements. */
 function collectTemplateLocalBindings(blocks: readonly JinjaBlockNode[]): Set<string> {
   const locals = new Set<string>();
   for (const block of blocks) {
@@ -1140,10 +1156,23 @@ function collectTemplateLocalBindings(blocks: readonly JinjaBlockNode[]): Set<st
           locals.add(tok.value.split('.')[0] ?? tok.value);
         }
       }
-    } else if (first.value === 'set') {
+    } else if (
+      first.value === 'set' ||
+      first.value === 'block' ||
+      first.value === 'endblock' ||
+      first.value === 'macro' ||
+      first.value === 'endmacro'
+    ) {
       const target = tokens[1];
       if (target && target.kind === 'variable') {
         locals.add(target.value.split('.')[0] ?? target.value);
+      }
+    } else if (first.value === 'import' || first.value === 'from') {
+      for (let i = 1; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok && tok.kind === 'variable') {
+          locals.add(tok.value.split('.')[0] ?? tok.value);
+        }
       }
     }
   }

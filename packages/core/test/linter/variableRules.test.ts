@@ -179,4 +179,26 @@ describe('undefined-variable and var-naming[no-role-prefix] rules & Quick-Fixes'
     });
     expect(diags.filter((d) => d.ruleId === 'undefined-variable')).toEqual([]);
   });
+
+  it('completely skips {% raw %}...{% endraw %} blocks and excludes Jinja2 block keywords', () => {
+    const tasksYaml = [
+      '---',
+      '- name: Inspect running container image via docker format string',
+      '  ansible.builtin.command:',
+      "    cmd: \"docker inspect --format '{% raw %}{{.Config.Image}}{% endraw %}' {{ container_name }}\"",
+      '  changed_when: false',
+      '',
+      '- name: Render template block with Jinja block keywords',
+      '  ansible.builtin.debug:',
+      '    msg: >',
+      '      {%- raw -%}{{ .State.Running }} {{ unparsed_inside_raw }}{%- endraw -%}',
+      '      {% block header scoped %}{{ container_name }}{% endblock %}',
+      '      {% with %}{{ container_name }}{% endwith %}',
+    ].join('\n');
+    const ast = parseAnsibleDocument('file:///ws/roles/docker/tasks/main.yml', tasksYaml, 'tasks');
+    const diags = lintAnsibleDocument(ast, registry, {
+      knownVariables: new Set(['container_name']),
+    });
+    expect(diags.filter((d) => d.ruleId === 'undefined-variable')).toEqual([]);
+  });
 });
