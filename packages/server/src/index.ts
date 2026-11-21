@@ -25,6 +25,8 @@ export {
   MemoryWorkspaceFs,
   NodeWorkspaceFs,
   fsPathToUri,
+  normalizeDocumentUri,
+  normalizeFsPathForIndex,
   uriToFsPath,
 } from './workspace-fs.js';
 

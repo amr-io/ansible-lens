@@ -226,15 +226,42 @@ export function bindLanguageServer(
 
   documents.onDidOpen((event) => {
     validateDocument(event.document);
+    revalidateAllOpenDocuments();
   });
 
   documents.onDidChangeContent((change) => {
     validateDocument(change.document);
+    revalidateAllOpenDocuments();
+  });
+
+  documents.onDidSave((event) => {
+    engine.updateDocument(event.document.uri, event.document.getText());
+    revalidateAllOpenDocuments();
   });
 
   documents.onDidClose((event) => {
-    engine.removeDocument(event.document.uri);
+    engine.closeDocument(event.document.uri);
     connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
+    revalidateAllOpenDocuments();
+  });
+
+  connection.onDidChangeWatchedFiles((params) => {
+    for (const change of params.changes) {
+      // FileChangeType: 1 = Created, 2 = Changed, 3 = Deleted
+      if (change.type === 3) {
+        engine.removeDocument(change.uri);
+        connection.sendDiagnostics({ uri: change.uri, diagnostics: [] });
+      } else {
+        const openDoc = documents.get(change.uri);
+        if (openDoc) {
+          engine.updateDocument(openDoc.uri, openDoc.getText());
+        } else {
+          engine.reloadDocumentFromDisk(change.uri);
+        }
+      }
+    }
+    engine.indexWorkspace();
+    revalidateAllOpenDocuments();
   });
 
   connection.onCompletion((params): CompletionItem[] => {

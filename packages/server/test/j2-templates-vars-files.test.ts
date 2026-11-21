@@ -140,4 +140,76 @@ describe('.j2 template intelligence and vars_files / include_vars relative path 
     expect(diags[0]?.code).toBe('undefined-variable');
     expect(diags[0]?.message).toContain("Did you mean 'webapp_release_tag'?");
   });
+
+  it('retains disk-backed defaults/main.yml and versions.yml in the index after closeDocument (closing a tab)', () => {
+    const service = createService();
+    const defaultsUri = fsPathToUri(roleDefaultsPath);
+
+    // User opens defaults/main.yml, adds an unsaved edit, then closes the tab without saving
+    service.updateDocument(defaultsUri, '---\nwebapp_http_port: 9999\ntemp_unsaved_var: true\n');
+    service.closeDocument(defaultsUri);
+    service.closeDocument(versionsUri);
+
+    // Disk-backed `webapp_http_port` and `webapp_release_tag` must remain indexed, while unsaved `temp_unsaved_var` is reverted
+    const cleanText = [
+      '# Managed by Ansible',
+      'WEBAPP_IMAGE_TAG="{{ webapp_release_tag }}"',
+      'WEBAPP_PORT={{ webapp_http_port }}',
+    ].join('\n');
+    expect(service.getDiagnostics(templateUri, cleanText)).toEqual([]);
+
+    const items = service.getCompletions(templateUri, { line: 1, character: 21 }, cleanText);
+    const labels = items.map((i) => i.label);
+    expect(labels).toContain('webapp_http_port');
+    expect(labels).toContain('webapp_release_tag');
+    expect(labels).not.toContain('temp_unsaved_var');
+  });
+
+  it('emits missing-vars-file diagnostic and immediately evicts unreferenced vars_files from the variable graph', () => {
+    const service = createService();
+    const siteUri = fsPathToUri(sitePath);
+
+    // Change vars_files in site.yml from `../../versions.yml` to a non-existent `../../version.yml`
+    const brokenSite = [
+      '---',
+      '- name: Deploy Webapp',
+      '  hosts: webapp_servers',
+      '  vars_files:',
+      '    - ../../version.yml',
+      '  roles:',
+      '    - webapp',
+    ].join('\n');
+    service.updateDocument(siteUri, brokenSite);
+
+    // 1. site.yml must emit `missing-vars-file`
+    const siteDiags = service.getDiagnostics(siteUri, brokenSite);
+    expect(siteDiags.map((d) => d.code)).toContain('missing-vars-file');
+
+    // 2. Old variables from `../../versions.yml` (`webapp_release_tag`, `mongo_image_version`) must be evicted
+    const templateText = 'WEBAPP_IMAGE_TAG="{{ webapp_release_tag }}"';
+    const templateDiags = service.getDiagnostics(templateUri, templateText);
+    expect(templateDiags.map((d) => d.code)).toContain('undefined-variable');
+
+    const completions = service.getCompletions(
+      templateUri,
+      { line: 0, character: 'WEBAPP_IMAGE_TAG="{{ '.length },
+      'WEBAPP_IMAGE_TAG="{{ ',
+    );
+    expect(completions.map((c) => c.label)).not.toContain('webapp_release_tag');
+    expect(completions.map((c) => c.label)).not.toContain('mongo_image_version');
+  });
+
+  it('normalizes Windows drive-letter URIs consistently across uppercase and lowercase file:// URIs', () => {
+    const service = createService();
+    const upperWinUri = 'file:///C:/repo/ansible/roles/webapp/defaults/main.yml';
+    const lowerWinUri = 'file:///c%3A/repo/ansible/roles/webapp/defaults/main.yml';
+    service.updateDocument(upperWinUri, '---\nwebapp_win_var: "ok"\n');
+
+    const hover = service.getHover(
+      lowerWinUri,
+      { line: 1, character: 3 },
+      '---\nwebapp_win_var: "ok"\n',
+    );
+    expect(hover).not.toBeNull();
+  });
 });
