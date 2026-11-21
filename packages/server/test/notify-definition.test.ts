@@ -178,4 +178,64 @@ describe('notify: Go-to-Definition strict matching and LocationLink multi-word h
       [],
     );
   });
+
+  it('prefers the handler inside the same role when duplicate handler names exist across multiple roles', () => {
+    const securityHandlersPath = '/repo/roles/security/handlers/main.yml';
+    const nginxHandlersPath = '/repo/roles/nginx/handlers/main.yml';
+    const securityTasksPath = '/repo/roles/security/tasks/main.yml';
+
+    const securityHandlers = [
+      '---',
+      '- name: Restart fail2ban',
+      '  ansible.builtin.service:',
+      '    name: fail2ban',
+      '    state: restarted',
+    ].join('\n');
+
+    const nginxHandlers = [
+      '---',
+      '- name: Restart fail2ban',
+      '  ansible.builtin.service:',
+      '    name: fail2ban',
+      '    state: reloaded',
+    ].join('\n');
+
+    const securityTasks = [
+      '---',
+      '- name: Update fail2ban jail',
+      '  ansible.builtin.copy:',
+      '    content: "ok"',
+      '    dest: /etc/fail2ban/jail.local',
+      '  notify: Restart fail2ban',
+    ].join('\n');
+
+    const fs = new MemoryWorkspaceFs({
+      '/repo/ansible.cfg': '[defaults]\nroles_path = ./roles\n',
+      [securityHandlersPath]: securityHandlers,
+      [nginxHandlersPath]: nginxHandlers,
+      [securityTasksPath]: securityTasks,
+    });
+    const service = new AnsibleLanguageService({
+      fs,
+      workspaceRoots: ['/repo'],
+    });
+    service.indexWorkspace();
+
+    const securityTasksUri = fsPathToUri(securityTasksPath);
+    const securityHandlersUri = fsPathToUri(securityHandlersPath);
+    const lineIdx = 5;
+    const col = securityTasks.split('\n')[lineIdx]!.indexOf('fail2ban') + 2;
+
+    const defs = service.getDefinition(
+      securityTasksUri,
+      { line: lineIdx, character: col },
+      securityTasks,
+    );
+    expect(defs).toHaveLength(1);
+    const link = defs[0];
+    expect(link && isLocationLink(link)).toBe(true);
+    if (link && isLocationLink(link)) {
+      expect(link.targetUri).toBe(securityHandlersUri);
+    }
+  });
 });
