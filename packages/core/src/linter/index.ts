@@ -1,16 +1,23 @@
 import type {
   AnsibleDocumentAst,
   IMetadataRegistry,
+  JinjaBlockNode,
+  JinjaVariableRef,
   LintDiagnostic,
+  LintOptions,
+  LintRuleId,
+  LintSeverity,
   ModuleMetadataSpec,
   ModuleOptionSpec,
   ModuleOptionType,
   QuickFixAction,
+  SourcePosition,
   SourceRange,
   TaskNode,
   TaskParamNode,
 } from '../contracts/types.js';
 import { findClosestMatch } from '../intelligence/similarity.js';
+import { advancePosition } from '../parser/sourceMap.js';
 
 const DEFAULT_FQCN_MAP: Readonly<Record<string, string>> = {
   apt: 'ansible.builtin.apt',
@@ -951,18 +958,499 @@ function lintTask(
   }
 }
 
+const BUILTIN_EXEMPT_VARIABLES: ReadonlySet<string> = new Set([
+  'item',
+  'ansible_loop',
+  'hostvars',
+  'groups',
+  'group_names',
+  'inventory_hostname',
+  'inventory_hostname_short',
+  'play_hosts',
+  'ansible_play_hosts',
+  'ansible_play_hosts_all',
+  'ansible_play_batch',
+  'ansible_play_name',
+  'ansible_play_role_names',
+  'ansible_role_names',
+  'ansible_dependent_role_names',
+  'ansible_collection_name',
+  'ansible_role_name',
+  'ansible_check_mode',
+  'ansible_diff_mode',
+  'ansible_forks',
+  'ansible_inventory_sources',
+  'ansible_limit',
+  'ansible_run_tags',
+  'ansible_skip_tags',
+  'ansible_verbosity',
+  'ansible_version',
+  'ansible_config_file',
+  'ansible_facts',
+  'ansible_local',
+  'ansible_env',
+  'ansible_user',
+  'ansible_host',
+  'ansible_port',
+  'ansible_connection',
+  'ansible_ssh_user',
+  'ansible_ssh_host',
+  'ansible_become',
+  'ansible_become_user',
+  'playbook_dir',
+  'role_path',
+  'role_name',
+  'role_names',
+  'role_uuid',
+  'inventory_dir',
+  'inventory_file',
+  'omit',
+  'vars',
+  'environment',
+  'lookup',
+  'query',
+  'q',
+  'now',
+  'undef',
+  'range',
+  'dict',
+  'lipsum',
+  'cycler',
+  'joiner',
+  'namespace',
+]);
+
+/** Extracts `<role>` if `uri` is inside `roles/<role>/(defaults|vars|tasks)/...`. */
+export function extractRoleContextFromUri(
+  uri: string,
+): { readonly roleName: string; readonly section: 'defaults' | 'vars' | 'tasks' } | undefined {
+  const normalized = uri.replaceAll('\\', '/');
+  const segments = normalized.split('/').filter((s) => s.length > 0);
+  const rolesIdx = segments.lastIndexOf('roles');
+  if (rolesIdx === -1 || rolesIdx + 2 >= segments.length) {
+    return undefined;
+  }
+  const rawRole = segments[rolesIdx + 1] ?? '';
+  const section = segments[rolesIdx + 2] ?? '';
+  if (
+    rawRole.length === 0 ||
+    (section !== 'defaults' && section !== 'vars' && section !== 'tasks')
+  ) {
+    return undefined;
+  }
+  const roleName = rawRole.replaceAll('-', '_');
+  return { roleName, section };
+}
+
+/**
+ * Checks `roles/<role>/defaults/`, `roles/<role>/vars/`, and `register:` / `set_fact:` inside
+ * `roles/<role>/tasks/` for variables lacking the `<role>_` prefix (`var-naming[no-role-prefix]`).
+ */
+function checkRoleVariablePrefixNaming(
+  ast: AnsibleDocumentAst,
+  tasks: readonly TaskNode[],
+  diagnostics: LintDiagnostic[],
+): void {
+  const ctx = extractRoleContextFromUri(ast.uri);
+  if (!ctx) {
+    return;
+  }
+  const prefix = `${ctx.roleName}_`;
+  const reportedOffsets = new Set<number>();
+
+  const emitWarning = (varName: string, range: SourceRange): void => {
+    if (
+      varName.length === 0 ||
+      varName.startsWith('_') ||
+      varName.startsWith(prefix) ||
+      reportedOffsets.has(range.start.offset)
+    ) {
+      return;
+    }
+    reportedOffsets.add(range.start.offset);
+    const suggested = `${prefix}${varName}`;
+    diagnostics.push({
+      ruleId: 'var-naming[no-role-prefix]',
+      message: `Variable '${varName}' in role '${ctx.roleName}' should be prefixed with '${prefix}' (e.g. '${suggested}').`,
+      severity: 'warning',
+      range,
+      quickFixes: [
+        {
+          title: `Rename to '${suggested}'`,
+          ruleId: 'var-naming[no-role-prefix]',
+          isPreferred: true,
+          edits: [{ range, newText: suggested }],
+        },
+      ],
+    });
+  };
+
+  if (ctx.section === 'defaults' || ctx.section === 'vars') {
+    for (const decl of ast.variables) {
+      if (
+        decl.sourceKind === 'role-defaults' ||
+        decl.sourceKind === 'role-vars' ||
+        decl.sourceKind === 'play-vars'
+      ) {
+        emitWarning(decl.name, decl.keyRange);
+      }
+    }
+    return;
+  }
+
+  // `roles/<role>/tasks/`: check `register:` and `set_fact:` declarations
+  for (const task of tasks) {
+    if (task.register && task.registerRange) {
+      emitWarning(task.register.trim(), task.registerRange);
+    }
+    const shortMod = shortModuleName(task.moduleName);
+    if (shortMod === 'set_fact') {
+      for (const param of task.params) {
+        if (param.name === 'cacheable') {
+          continue;
+        }
+        emitWarning(param.name, param.keyRange);
+      }
+    }
+  }
+}
+
+/** Collects local loop/set identifier bindings declared inside `{% for x in ... %}` or `{% set x = ... %}`. */
+function collectTemplateLocalBindings(blocks: readonly JinjaBlockNode[]): Set<string> {
+  const locals = new Set<string>();
+  for (const block of blocks) {
+    if (block.kind !== 'statement') {
+      continue;
+    }
+    const tokens = block.tokens;
+    const first = tokens[0];
+    if (!first || first.kind !== 'keyword') {
+      continue;
+    }
+    if (first.value === 'for') {
+      for (let i = 1; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (!tok) {
+          break;
+        }
+        if (tok.kind === 'keyword' && tok.value === 'in') {
+          break;
+        }
+        if (tok.kind === 'variable') {
+          locals.add(tok.value.split('.')[0] ?? tok.value);
+        }
+      }
+    } else if (first.value === 'set') {
+      const target = tokens[1];
+      if (target && target.kind === 'variable') {
+        locals.add(target.value.split('.')[0] ?? target.value);
+      }
+    }
+  }
+  return locals;
+}
+
+/**
+ * Returns true when a variable token at `tokenIdx` in `block.tokens` is guarded by:
+ * - `| default(...)` or `| d(...)`
+ * - `is defined`, `is not defined`, `is undefined`, or `is not undefined`
+ * - being the loop/assignment target of `{% for <var> in ... %}` or `{% set <var> = ... %}`
+ * - being a named argument key (`foo=bar` inside a function/filter call)
+ */
+function isJinjaVariableGuarded(block: JinjaBlockNode, varRef: JinjaVariableRef): boolean {
+  const tokens = block.tokens;
+  const idx = tokens.findIndex(
+    (t) => t.kind === 'variable' && t.range.start.offset === varRef.range.start.offset,
+  );
+  if (idx === -1) {
+    return false;
+  }
+
+  // Named argument key: `foo = ...` inside `filter(foo=...)`
+  const nextTok = tokens[idx + 1];
+  const prevTok = idx > 0 ? tokens[idx - 1] : undefined;
+  if (
+    nextTok?.kind === 'operator' &&
+    nextTok.value === '=' &&
+    prevTok &&
+    (prevTok.value === '(' || prevTok.value === ',')
+  ) {
+    return true;
+  }
+
+  // `| default(...)` or `| d(...)` immediately or in a filter chain after the variable
+  let cursor = idx + 1;
+  while (cursor < tokens.length) {
+    const t = tokens[cursor];
+    if (!t) {
+      break;
+    }
+    if (t.kind === 'operator' && t.value === '|') {
+      const filterTok = tokens[cursor + 1];
+      if (filterTok?.kind === 'filter') {
+        if (filterTok.value === 'default' || filterTok.value === 'd') {
+          return true;
+        }
+        cursor += 2;
+        if (tokens[cursor]?.value === '(') {
+          let depth = 1;
+          cursor++;
+          while (cursor < tokens.length && depth > 0) {
+            if (tokens[cursor]?.value === '(') {
+              depth++;
+            } else if (tokens[cursor]?.value === ')') {
+              depth--;
+            }
+            cursor++;
+          }
+        }
+        continue;
+      }
+    }
+    break;
+  }
+
+  // `is defined` / `is not defined` / `is undefined` / `is not undefined`
+  if (nextTok?.kind === 'keyword' && nextTok.value === 'is') {
+    const afterIs = tokens[idx + 2];
+    const afterNot = tokens[idx + 3];
+    if (
+      afterIs?.kind === 'test' &&
+      (afterIs.value === 'defined' || afterIs.value === 'undefined')
+    ) {
+      return true;
+    }
+    if (
+      afterIs?.kind === 'keyword' &&
+      afterIs.value === 'not' &&
+      afterNot?.kind === 'test' &&
+      (afterNot.value === 'defined' || afterNot.value === 'undefined')
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/** Computes the exact `SourceRange` covering only the root variable identifier of `varRef`. */
+function rootVariableRange(varRef: JinjaVariableRef): SourceRange {
+  if (varRef.raw === varRef.root) {
+    return varRef.range;
+  }
+  const endPos: SourcePosition = advancePosition(varRef.range.start, varRef.root);
+  return {
+    start: varRef.range.start,
+    end: endPos,
+  };
+}
+
+/**
+ * Checks all Jinja2 variable references in `ast` against known workspace and document variables
+ * (`undefined-variable`) with smart zero-noise exclusions and Levenshtein Quick-Fixes.
+ */
+function checkUndefinedVariables(
+  ast: AnsibleDocumentAst,
+  tasks: readonly TaskNode[],
+  options: LintOptions | undefined,
+  diagnostics: LintDiagnostic[],
+): void {
+  const known = new Set<string>();
+  if (options?.knownVariables) {
+    for (const v of options.knownVariables) {
+      known.add(v);
+    }
+  }
+  for (const decl of ast.variables) {
+    known.add(decl.name);
+  }
+  for (const play of ast.plays) {
+    if (play.vars) {
+      for (const k of Object.keys(play.vars)) {
+        known.add(k);
+      }
+    }
+    for (const role of play.roles) {
+      if (role.vars) {
+        for (const k of Object.keys(role.vars)) {
+          known.add(k);
+        }
+      }
+    }
+  }
+  for (const task of tasks) {
+    if (task.register && task.register.trim().length > 0) {
+      known.add(task.register.trim());
+    }
+    if (task.vars) {
+      for (const k of Object.keys(task.vars)) {
+        known.add(k);
+      }
+    }
+    const shortMod = shortModuleName(task.moduleName);
+    if (shortMod === 'set_fact') {
+      for (const p of task.params) {
+        if (p.name !== 'cacheable') {
+          known.add(p.name);
+        }
+      }
+    } else if (
+      (shortMod === 'include_role' ||
+        shortMod === 'import_role' ||
+        shortMod === 'include_tasks' ||
+        shortMod === 'import_tasks') &&
+      task.params.some((p) => p.name === 'vars')
+    ) {
+      for (const p of task.params) {
+        if (p.name === 'vars' && p.suboptions) {
+          for (const sub of p.suboptions) {
+            known.add(sub.name);
+          }
+        }
+      }
+    }
+  }
+
+  // Only enforce undefined-variable when a known variable set is available (or variables are defined).
+  if (!options?.knownVariables && known.size === 0) {
+    return;
+  }
+
+  const extraVarsSet = new Set<string>(options?.extraVars ?? []);
+  const templateLocals = collectTemplateLocalBindings(ast.jinjaBlocks);
+  const candidateList = Array.from(new Set([...known, ...extraVarsSet]));
+  const reportedRanges = new Set<string>();
+
+  const findEnclosingTaskLoopVar = (offset: number): string | undefined => {
+    for (const task of tasks) {
+      if (offset >= task.range.start.offset && offset <= task.range.end.offset) {
+        return task.loopVar;
+      }
+    }
+    return undefined;
+  };
+
+  for (const block of ast.jinjaBlocks) {
+    if (block.kind === 'comment') {
+      continue;
+    }
+    for (const varRef of block.variables) {
+      const root = varRef.root;
+      if (
+        root.length === 0 ||
+        known.has(root) ||
+        extraVarsSet.has(root) ||
+        templateLocals.has(root) ||
+        BUILTIN_EXEMPT_VARIABLES.has(root) ||
+        root.startsWith('ansible_')
+      ) {
+        continue;
+      }
+      const taskLoopVar = findEnclosingTaskLoopVar(varRef.range.start.offset);
+      if (taskLoopVar !== undefined && root === taskLoopVar) {
+        continue;
+      }
+      if (isJinjaVariableGuarded(block, varRef)) {
+        continue;
+      }
+
+      const targetRange = rootVariableRange(varRef);
+      const dedupKey = `${targetRange.start.offset}:${targetRange.end.offset}:${root}`;
+      if (reportedRanges.has(dedupKey)) {
+        continue;
+      }
+      reportedRanges.add(dedupKey);
+
+      const closest = findClosestMatch(root, candidateList);
+      const quickFixes: QuickFixAction[] = closest
+        ? [
+            {
+              title: `Did you mean '${closest}'?`,
+              ruleId: 'undefined-variable',
+              isPreferred: true,
+              edits: [{ range: targetRange, newText: closest }],
+            },
+          ]
+        : [];
+      const suggestionSuffix = closest ? ` Did you mean '${closest}'?` : '';
+      diagnostics.push({
+        ruleId: 'undefined-variable',
+        message: `Undefined variable '${root}' is not defined in the workspace variable graph.${suggestionSuffix}`,
+        severity: 'warning',
+        range: targetRange,
+        quickFixes,
+      });
+    }
+  }
+}
+
+const MINIMAL_PROFILE_RULES: ReadonlySet<LintRuleId> = new Set([
+  'yaml-syntax',
+  'unknown-module',
+  'unknown-param',
+  'missing-required-param',
+  'invalid-choice',
+  'param-type-mismatch',
+  'duplicate-keys',
+]);
+
+const BASIC_PROFILE_EXCLUDED_RULES: ReadonlySet<LintRuleId> = new Set([
+  'var-naming[no-role-prefix]',
+]);
+
+/**
+ * Applies `profile` and per-rule `ruleOverrides` filtering/severity adjustments to a list of diagnostics.
+ */
+export function applyLintConfiguration(
+  diagnostics: readonly LintDiagnostic[],
+  options?: LintOptions,
+): readonly LintDiagnostic[] {
+  if (!options?.profile && !options?.ruleOverrides) {
+    return diagnostics;
+  }
+  const profile = options.profile ?? 'moderate';
+  const overrides = options.ruleOverrides ?? {};
+  const out: LintDiagnostic[] = [];
+
+  for (const diag of diagnostics) {
+    const override = overrides[diag.ruleId];
+    if (override === 'off') {
+      continue;
+    }
+    if (override === undefined) {
+      if (profile === 'minimal' && !MINIMAL_PROFILE_RULES.has(diag.ruleId)) {
+        continue;
+      }
+      if (profile === 'basic' && BASIC_PROFILE_EXCLUDED_RULES.has(diag.ruleId)) {
+        continue;
+      }
+    }
+    const effectiveSeverity: LintSeverity =
+      override !== undefined
+        ? override
+        : profile === 'production' && diag.severity === 'warning'
+          ? 'error'
+          : diag.severity;
+    out.push(effectiveSeverity === diag.severity ? diag : { ...diag, severity: effectiveSeverity });
+  }
+  return out;
+}
+
 /**
  * Runs all clean-room static lint rules and produces diagnostics with 1-click Quick-Fixes.
  */
 export function lintAnsibleDocument(
   ast: AnsibleDocumentAst,
   registry: IMetadataRegistry,
+  options?: LintOptions,
 ): readonly LintDiagnostic[] {
   const diagnostics: LintDiagnostic[] = [];
   const tasks = collectAllTasks(ast);
 
   lintSyntaxAndYamlBasics(ast, tasks, diagnostics);
   checkHardcodedSecrets(ast, tasks, diagnostics);
+  checkRoleVariablePrefixNaming(ast, tasks, diagnostics);
+  checkUndefinedVariables(ast, tasks, options, diagnostics);
 
   const registeredModules = registry.listModules();
   const knownModuleNames: string[] = [];
@@ -985,5 +1473,5 @@ export function lintAnsibleDocument(
     lintTask(task, registry, knownModuleNames, loadedCollections, diagnostics);
   }
 
-  return diagnostics;
+  return applyLintConfiguration(diagnostics, options);
 }

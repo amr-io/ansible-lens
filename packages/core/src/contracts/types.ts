@@ -22,13 +22,7 @@ export type JinjaBlockKind = 'expression' | 'statement' | 'comment' | 'implicit'
 
 /** Token kind emitted by the lightweight Jinja2 lexical scanner. */
 export type JinjaTokenKind =
-  | 'variable'
-  | 'filter'
-  | 'test'
-  | 'operator'
-  | 'literal'
-  | 'keyword'
-  | 'punctuation';
+  'variable' | 'filter' | 'test' | 'operator' | 'literal' | 'keyword' | 'punctuation';
 
 /** Individual lexical token inside a Jinja2 block. */
 export interface JinjaToken {
@@ -117,6 +111,7 @@ export interface TaskNode {
   readonly registerRange?: SourceRange;
   readonly loop?: unknown;
   readonly loopKind?: TaskLoopKind;
+  readonly loopVar?: string;
   readonly when?: string;
   readonly whenRange?: SourceRange;
   readonly changedWhen?: string | boolean;
@@ -387,7 +382,21 @@ export type LintRuleId =
   | 'missing-role-tasks'
   | 'missing-handler'
   | 'missing-src-file'
-  | 'unknown-inventory-host';
+  | 'unknown-inventory-host'
+  | 'undefined-variable'
+  | 'var-naming[no-role-prefix]';
+
+/** Configuration options passed to `lintAnsibleDocument`. */
+export interface LintOptions {
+  /** Known workspace variable names (from `WorkspaceVariableGraph`, `register:`, `set_fact:`, etc.). */
+  readonly knownVariables?: ReadonlySet<string>;
+  /** User-configured extra variable names (`ansibleLens.lint.extraVars`). */
+  readonly extraVars?: readonly string[];
+  /** Lint profile level (`minimal`, `basic`, `moderate`, `production`). */
+  readonly profile?: 'minimal' | 'basic' | 'moderate' | 'production';
+  /** Per-rule severity overrides (`error`, `warning`, `info`, or `off`). */
+  readonly ruleOverrides?: Readonly<Record<string, LintSeverity | 'off'>>;
+}
 
 /** Text replacement edit for a Quick-Fix action. */
 export interface TextEditSpec {

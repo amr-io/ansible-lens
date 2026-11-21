@@ -621,6 +621,7 @@ function parseTaskOrBlockMap(mapNode: YAMLMap, ctx: ParseContext): TaskNode[] {
   let registerRange: SourceRange | undefined;
   let loop: unknown;
   let loopKind: TaskLoopKind | undefined;
+  let loopVar: string | undefined;
   let whenStr: string | undefined;
   let whenRange: SourceRange | undefined;
   let changedWhen: string | boolean | undefined;
@@ -662,6 +663,20 @@ function parseTaskOrBlockMap(mapNode: YAMLMap, ctx: ParseContext): TaskNode[] {
     if ((LOOP_KEYWORDS as readonly string[]).includes(key)) {
       loopKind = key as TaskLoopKind;
       loop = toPlainJsValue(pair.value);
+      collectJinjaFromNode(pair.value, ctx.text, ctx.index, ctx.jinjaBlocks);
+      continue;
+    }
+
+    if (key === 'loop_control' && isMap(pair.value)) {
+      for (const lcPair of pair.value.items) {
+        if (!isPair(lcPair)) {
+          continue;
+        }
+        const lcKey = keyToString(lcPair.key, ctx.text);
+        if (lcKey === 'loop_var') {
+          loopVar = scalarToString(lcPair.value);
+        }
+      }
       collectJinjaFromNode(pair.value, ctx.text, ctx.index, ctx.jinjaBlocks);
       continue;
     }
@@ -775,6 +790,7 @@ function parseTaskOrBlockMap(mapNode: YAMLMap, ctx: ParseContext): TaskNode[] {
       ...(registerRange !== undefined ? { registerRange } : {}),
       ...(loop !== undefined ? { loop } : {}),
       ...(loopKind !== undefined ? { loopKind } : {}),
+      ...(loopVar !== undefined ? { loopVar } : {}),
       ...(whenStr !== undefined ? { when: whenStr } : {}),
       ...(whenRange !== undefined ? { whenRange } : {}),
       ...(changedWhen !== undefined ? { changedWhen } : {}),
@@ -830,6 +846,7 @@ function parseTaskOrBlockMap(mapNode: YAMLMap, ctx: ParseContext): TaskNode[] {
     ...(registerRange !== undefined ? { registerRange } : {}),
     ...(loop !== undefined ? { loop } : {}),
     ...(loopKind !== undefined ? { loopKind } : {}),
+    ...(loopVar !== undefined ? { loopVar } : {}),
     ...(whenStr !== undefined ? { when: whenStr } : {}),
     ...(whenRange !== undefined ? { whenRange } : {}),
     ...(changedWhen !== undefined ? { changedWhen } : {}),
