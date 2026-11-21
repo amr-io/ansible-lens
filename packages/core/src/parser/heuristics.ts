@@ -1,145 +1,314 @@
 import type { AnsibleDocumentKind, AnsibleHeuristicResult } from '../contracts/types.js';
 
+const PLAYBOOK_FILENAMES = new Set([
+  'site.yml',
+  'site.yaml',
+  'playbook.yml',
+  'playbook.yaml',
+  'main.yml',
+  'main.yaml',
+  'deploy.yml',
+  'deploy.yaml',
+  'provision.yml',
+  'provision.yaml',
+  'setup.yml',
+  'setup.yaml',
+]);
+
+const TASK_SIGNATURE_DIRECTIVES = new Set([
+  'name',
+  'block',
+  'rescue',
+  'always',
+  'register',
+  'when',
+  'changed_when',
+  'failed_when',
+  'notify',
+  'loop',
+  'with_items',
+  'with_dict',
+  'with_list',
+  'become',
+  'delegate_to',
+  'import_tasks',
+  'include_tasks',
+  'include_role',
+  'import_role',
+]);
+
+const KNOWN_COLLECTION_PREFIXES = [
+  'ansible.builtin.',
+  'ansible.posix.',
+  'community.general.',
+  'community.docker.',
+  'community.crypto.',
+  'ansible.windows.',
+  'amazon.aws.',
+  'kubernetes.core.',
+  'community.mysql.',
+  'community.postgresql.',
+  'ansible.utils.',
+] as const;
+
 function normalizePath(uri: string): string {
-  // Normalize Windows backslashes and strip file:// URI prefix + drive letters cleanly
-  const withoutScheme = uri.replace(/^file:\/\/\//i, '/').replace(/^file:\/\//i, '');
-  return withoutScheme.replace(/\\/g, '/').toLowerCase();
+  let withoutScheme = uri;
+  const lower = uri.toLowerCase();
+  if (lower.startsWith('file:///')) {
+    withoutScheme = `/${uri.slice('file:///'.length)}`;
+  } else if (lower.startsWith('file://')) {
+    withoutScheme = uri.slice('file://'.length);
+  }
+  return withoutScheme.replaceAll('\\', '/').toLowerCase();
 }
 
 function isYamlUri(normalizedPath: string): boolean {
-  return (
-    normalizedPath.endsWith('.yml') ||
-    normalizedPath.endsWith('.yaml') ||
-    normalizedPath.endsWith('.ansible.yml') ||
-    normalizedPath.endsWith('.ansible.yaml')
-  );
+  return normalizedPath.endsWith('.yml') || normalizedPath.endsWith('.yaml');
 }
 
 function classifyByPath(normalizedPath: string): AnsibleDocumentKind | undefined {
-  // Role files
-  if (
-    /\/roles\/[^/]+\/tasks\/[^/]+\.ya?ml$/.test(normalizedPath) ||
-    /^roles\/[^/]+\/tasks\/[^/]+\.ya?ml$/.test(normalizedPath)
-  ) {
-    return 'tasks';
-  }
-  if (
-    /\/roles\/[^/]+\/handlers\/[^/]+\.ya?ml$/.test(normalizedPath) ||
-    /^roles\/[^/]+\/handlers\/[^/]+\.ya?ml$/.test(normalizedPath)
-  ) {
-    return 'handlers';
-  }
-  if (
-    /\/roles\/[^/]+\/defaults\/[^/]+\.ya?ml$/.test(normalizedPath) ||
-    /^roles\/[^/]+\/defaults\/[^/]+\.ya?ml$/.test(normalizedPath)
-  ) {
-    return 'role-defaults';
-  }
-  if (
-    /\/roles\/[^/]+\/vars\/[^/]+\.ya?ml$/.test(normalizedPath) ||
-    /^roles\/[^/]+\/vars\/[^/]+\.ya?ml$/.test(normalizedPath)
-  ) {
-    return 'role-vars';
+  const segments = normalizedPath.split('/').filter((s) => s.length > 0);
+  if (segments.length === 0) {
+    return undefined;
   }
 
-  // Group / Host vars
-  if (/(?:^|\/)group_vars\/.+/.test(normalizedPath)) {
+  const fileName = segments[segments.length - 1] ?? '';
+  const dirSegments = segments.slice(0, -1);
+  const isYaml = isYamlUri(fileName);
+
+  if (isYaml && segments.length >= 4 && segments[segments.length - 4] === 'roles') {
+    const roleSubdir = segments[segments.length - 2];
+    if (roleSubdir === 'tasks') {
+      return 'tasks';
+    }
+    if (roleSubdir === 'handlers') {
+      return 'handlers';
+    }
+    if (roleSubdir === 'defaults') {
+      return 'role-defaults';
+    }
+    if (roleSubdir === 'vars') {
+      return 'role-vars';
+    }
+  }
+
+  if (dirSegments.includes('group_vars')) {
     return 'group-vars';
   }
-  if (/(?:^|\/)host_vars\/.+/.test(normalizedPath)) {
+  if (dirSegments.includes('host_vars')) {
     return 'host-vars';
   }
 
-  // Inventory directories or explicit inventory YAML files
   if (
-    /(?:^|\/)inventory\/.+\.ya?ml$/.test(normalizedPath) ||
-    /(?:^|\/)inventories\/.+\.ya?ml$/.test(normalizedPath) ||
-    /(?:^|\/)(?:hosts|inventory)\.ya?ml$/.test(normalizedPath)
+    isYaml &&
+    (dirSegments.includes('inventory') ||
+      dirSegments.includes('inventories') ||
+      fileName === 'hosts.yml' ||
+      fileName === 'hosts.yaml' ||
+      fileName === 'inventory.yml' ||
+      fileName === 'inventory.yaml')
   ) {
     return 'inventory';
   }
 
-  // Handlers standalone directory
-  if (/(?:^|\/)handlers\/[^/]+\.ya?ml$/.test(normalizedPath)) {
-    return 'handlers';
+  if (isYaml && segments.length >= 2) {
+    const parentDir = segments[segments.length - 2];
+    if (parentDir === 'handlers') {
+      return 'handlers';
+    }
+    if (parentDir === 'tasks') {
+      return 'tasks';
+    }
   }
 
-  // Tasks standalone directory
-  if (/(?:^|\/)tasks\/[^/]+\.ya?ml$/.test(normalizedPath)) {
-    return 'tasks';
-  }
-
-  // Common playbook filenames and directories
-  if (
-    /(?:^|\/)(?:site|playbook|main|deploy|provision|setup)\.ya?ml$/.test(normalizedPath) ||
-    /(?:^|\/)playbooks\/.+\.ya?ml$/.test(normalizedPath)
-  ) {
+  if (isYaml && (PLAYBOOK_FILENAMES.has(fileName) || dirSegments.includes('playbooks'))) {
     return 'playbook';
   }
 
   return undefined;
 }
 
-function hasNegativeYamlSignature(text: string): string | undefined {
-  // Kubernetes manifest: top-level `apiVersion:` and `kind:`
-  const hasK8sApiVersion = /^apiVersion\s*:/m.test(text);
-  const hasK8sKind = /^kind\s*:/m.test(text);
+interface ParsedLineKey {
+  readonly indent: number;
+  readonly hasDash: boolean;
+  readonly key: string;
+}
+
+function parseLineKey(rawLine: string): ParsedLineKey | undefined {
+  let indent = 0;
+  while (indent < rawLine.length) {
+    const ch = rawLine.charCodeAt(indent);
+    if (ch !== 32 && ch !== 9) {
+      break;
+    }
+    indent++;
+  }
+  if (indent >= rawLine.length) {
+    return undefined;
+  }
+
+  const afterIndent = rawLine.slice(indent);
+  if (afterIndent.startsWith('#') || afterIndent === '---' || afterIndent === '...') {
+    return undefined;
+  }
+
+  let hasDash = false;
+  let content = afterIndent;
+  if (afterIndent === '-' || afterIndent.startsWith('- ') || afterIndent.startsWith('-\t')) {
+    hasDash = true;
+    content = afterIndent.slice(1).trimStart();
+  }
+
+  const colonIdx = content.indexOf(':');
+  if (colonIdx <= 0) {
+    return hasDash ? { indent, hasDash: true, key: '' } : undefined;
+  }
+
+  const afterColon = content.slice(colonIdx + 1);
+  if (afterColon.length > 0 && afterColon[0] !== ' ' && afterColon[0] !== '\t') {
+    return undefined;
+  }
+
+  const key = content.slice(0, colonIdx).trim();
+  return { indent, hasDash, key };
+}
+
+function scanDocumentLines(text: string): readonly ParsedLineKey[] {
+  const rawLines = text.replaceAll('\r\n', '\n').split('\n');
+  const parsed: ParsedLineKey[] = [];
+  for (const rawLine of rawLines) {
+    const entry = parseLineKey(rawLine);
+    if (entry !== undefined) {
+      parsed.push(entry);
+    }
+  }
+  return parsed;
+}
+
+function hasNegativeYamlSignature(lines: readonly ParsedLineKey[]): string | undefined {
+  let hasK8sApiVersion = false;
+  let hasK8sKind = false;
+  let hasServices = false;
+  let hasComposeCompanion = false;
+  let hasGhaOn = false;
+  let hasGhaJobs = false;
+
+  for (const line of lines) {
+    if (!line.hasDash && line.indent === 0) {
+      if (line.key === 'apiVersion') {
+        hasK8sApiVersion = true;
+      } else if (line.key === 'kind') {
+        hasK8sKind = true;
+      } else if (line.key === 'services') {
+        hasServices = true;
+      } else if (
+        line.key === 'volumes' ||
+        line.key === 'networks' ||
+        line.key === 'version' ||
+        line.key === 'configs' ||
+        line.key === 'secrets'
+      ) {
+        hasComposeCompanion = true;
+      } else if (line.key === 'on' || line.key === "'on'" || line.key === '"on"') {
+        hasGhaOn = true;
+      } else if (line.key === 'jobs') {
+        hasGhaJobs = true;
+      }
+    } else if (!line.hasDash && line.indent >= 2) {
+      if (
+        line.key === 'image' ||
+        line.key === 'build' ||
+        line.key === 'ports' ||
+        line.key === 'container_name'
+      ) {
+        hasComposeCompanion = true;
+      }
+    }
+  }
+
   if (hasK8sApiVersion && hasK8sKind) {
     return 'negative-guard:kubernetes';
   }
-
-  // Docker Compose: top-level `services:` paired with `volumes:`, `networks:`, or `version:` (or `services:` with `image:`/`build:`)
-  const hasServices = /^services\s*:/m.test(text);
-  const hasComposeCompanion =
-    /^(?:volumes|networks|version|configs|secrets)\s*:/m.test(text) ||
-    /^\s{2,}(?:image|build|ports|container_name)\s*:/m.test(text);
   if (hasServices && hasComposeCompanion) {
     return 'negative-guard:docker-compose';
   }
-
-  // GitHub Actions workflow: top-level `on:` (or `'on':`) paired with `jobs:`
-  const hasGhaOn = /^(?:on|'on'|"on")\s*:/m.test(text);
-  const hasGhaJobs = /^jobs\s*:/m.test(text);
   if (hasGhaOn && hasGhaJobs) {
     return 'negative-guard:github-actions';
   }
-
   return undefined;
 }
 
-function hasPlaybookContentSignature(text: string): boolean {
-  const hasHosts = /^(?:\s*-\s+hosts\s*:|\s+hosts\s*:)/m.test(text);
-  if (!hasHosts) {
-    return false;
+function hasPlaybookContentSignature(lines: readonly ParsedLineKey[]): boolean {
+  let hasDashHosts = false;
+  let hasIndentedHosts = false;
+  let hasPlayCompanion = false;
+
+  for (const line of lines) {
+    if (line.hasDash && line.key === 'hosts') {
+      hasDashHosts = true;
+    } else if (!line.hasDash && line.indent > 0 && line.key === 'hosts') {
+      hasIndentedHosts = true;
+    }
+    if (
+      (line.hasDash || line.indent > 0) &&
+      (line.key === 'tasks' ||
+        line.key === 'roles' ||
+        line.key === 'pre_tasks' ||
+        line.key === 'post_tasks' ||
+        line.key === 'handlers' ||
+        line.key === 'vars' ||
+        line.key === 'vars_files' ||
+        line.key === 'gather_facts' ||
+        line.key === 'become' ||
+        line.key === 'import_playbook')
+    ) {
+      hasPlayCompanion = true;
+    }
   }
-  return (
-    /^(?:\s*-\s+|\s+)(?:tasks|roles|pre_tasks|post_tasks|handlers|vars|vars_files|gather_facts|become|import_playbook)\s*:/m.test(
-      text,
-    ) || /^(?:\s*-\s+hosts\s*:)/m.test(text)
-  );
+
+  return hasDashHosts || (hasIndentedHosts && hasPlayCompanion);
 }
 
-function hasTaskListContentSignature(text: string): boolean {
-  const startsWithSeq = /^\s*(?:---(?:\s|$)\s*)?-\s+/m.test(text);
-  if (!startsWithSeq) {
+function isKnownFqcnKey(key: string): boolean {
+  for (const prefix of KNOWN_COLLECTION_PREFIXES) {
+    if (key.startsWith(prefix) && key.length > prefix.length) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasTaskListContentSignature(lines: readonly ParsedLineKey[]): boolean {
+  const first = lines[0];
+  if (!first || !first.hasDash) {
     return false;
   }
 
-  // Look for common Ansible task directives or FQCN module calls
-  const hasAnsibleTaskDirective =
-    /^(?:\s*-\s+|\s+)(?:name|block|rescue|always|register|when|changed_when|failed_when|notify|loop|with_items|with_dict|with_list|become|delegate_to|import_tasks|include_tasks|include_role|import_role)\s*:/m.test(
-      text,
-    );
-  const hasFqcnModule =
-    /^(?:\s*-\s+|\s+)(?:ansible\.builtin|ansible\.posix|community\.general|community\.docker|community\.crypto|ansible\.windows|amazon\.aws|kubernetes\.core|community\.mysql|community\.postgresql|ansible\.utils)\.[a-z0-9_]+\s*:/m.test(
-      text,
-    );
-
-  return hasAnsibleTaskDirective || hasFqcnModule;
+  for (const line of lines) {
+    if (line.hasDash || line.indent > 0) {
+      if (TASK_SIGNATURE_DIRECTIVES.has(line.key) || isKnownFqcnKey(line.key)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
-function hasInventoryContentSignature(text: string): boolean {
-  return /^all\s*:/m.test(text) && /^\s+(?:hosts|children|vars)\s*:/m.test(text);
+function hasInventoryContentSignature(lines: readonly ParsedLineKey[]): boolean {
+  let hasTopAll = false;
+  let hasSubKey = false;
+  for (const line of lines) {
+    if (!line.hasDash && line.indent === 0 && line.key === 'all') {
+      hasTopAll = true;
+    } else if (
+      !line.hasDash &&
+      line.indent > 0 &&
+      (line.key === 'hosts' || line.key === 'children' || line.key === 'vars')
+    ) {
+      hasSubKey = true;
+    }
+  }
+  return hasTopAll && hasSubKey;
 }
 
 /**
@@ -154,7 +323,6 @@ export function detectAnsibleDocument(
   const normalizedPath = normalizePath(uri);
 
   if (!isYamlUri(normalizedPath) && !normalizedPath.endsWith('.j2')) {
-    // Allow explicit `hosts` / `group_vars` / `host_vars` extensionless files when inside Ansible directories
     const pathKindNoExt = classifyByPath(normalizedPath);
     if (!pathKindNoExt) {
       return {
@@ -165,8 +333,10 @@ export function detectAnsibleDocument(
     }
   }
 
+  const parsedLines = scanDocumentLines(text);
+
   // 1. Fast negative guards always win over generic YAML filenames (even in ansible.cfg workspaces)
-  const negativeReason = hasNegativeYamlSignature(text);
+  const negativeReason = hasNegativeYamlSignature(parsedLines);
   if (negativeReason) {
     return {
       isAnsible: false,
@@ -178,7 +348,7 @@ export function detectAnsibleDocument(
   // 2. Content signatures (playbook / tasks / inventory) refine classification
   const pathKind = classifyByPath(normalizedPath);
 
-  if (hasPlaybookContentSignature(text)) {
+  if (hasPlaybookContentSignature(parsedLines)) {
     return {
       isAnsible: true,
       kind: 'playbook',
@@ -194,7 +364,7 @@ export function detectAnsibleDocument(
     };
   }
 
-  if (hasTaskListContentSignature(text)) {
+  if (hasTaskListContentSignature(parsedLines)) {
     return {
       isAnsible: true,
       kind: 'tasks',
@@ -202,7 +372,7 @@ export function detectAnsibleDocument(
     };
   }
 
-  if (hasInventoryContentSignature(text)) {
+  if (hasInventoryContentSignature(parsedLines)) {
     return {
       isAnsible: true,
       kind: 'inventory',

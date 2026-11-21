@@ -27,7 +27,7 @@ export function formatModuleHoverMarkdown(mod: ModuleMetadataSpec): string {
     for (const opt of optionEntries.slice(0, 12)) {
       const req = opt.required ? 'yes' : 'no';
       const def = opt.default !== undefined ? `\`${JSON.stringify(opt.default)}\`` : '—';
-      const desc = opt.description.replace(/\|/g, '\\|');
+      const desc = opt.description.replaceAll('\\', '\\\\').replaceAll('|', '\\|');
       lines.push(`| \`${opt.name}\` | \`${opt.type}\` | ${req} | ${def} | ${desc} |`);
     }
     if (optionEntries.length > 12) {
@@ -159,5 +159,5 @@ function formatDisplayValue(value: unknown, rawValue: string): string {
 }
 
 function shortUriLabel(uri: string): string {
-  return uri.replace(/^file:\/\//, '');
+  return uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
 }

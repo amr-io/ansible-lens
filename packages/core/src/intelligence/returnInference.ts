@@ -250,19 +250,41 @@ function expandPathSegments(pathSegments: readonly string[]): readonly string[] 
     if (bracketIndex > 0) {
       expanded.push(segment.slice(0, bracketIndex));
     }
-    const rest = segment.slice(bracketIndex);
-    const matches = rest.match(/\[[^\]]*\]/g);
-    if (matches) {
-      for (const m of matches) {
-        expanded.push(m);
+    let cursor = bracketIndex;
+    while (cursor < segment.length) {
+      const openIdx = segment.indexOf('[', cursor);
+      if (openIdx === -1) {
+        break;
       }
+      const closeIdx = segment.indexOf(']', openIdx + 1);
+      if (closeIdx === -1) {
+        break;
+      }
+      expanded.push(segment.slice(openIdx, closeIdx + 1));
+      cursor = closeIdx + 1;
     }
   }
   return expanded;
 }
 
+function isDigitsOnly(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 48 || code > 57) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isArrayIndexSegment(segment: string): boolean {
-  return /^(\[\d*\]|\d+|\*)$/.test(segment);
+  if (segment === '*') {
+    return true;
+  }
+  if (segment.startsWith('[') && segment.endsWith(']')) {
+    return isDigitsOnly(segment.slice(1, -1));
+  }
+  return segment.length > 0 && isDigitsOnly(segment);
 }
 
 /**

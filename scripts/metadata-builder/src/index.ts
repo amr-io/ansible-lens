@@ -367,7 +367,7 @@ export function runAnsibleDocMetadataDump(collectionFilter: string): AnsibleDocD
     ['-t', 'module', '--metadata-dump', '--no-fail-on-errors', collectionFilter],
     {
       encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: 256 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );

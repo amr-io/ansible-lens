@@ -21,6 +21,111 @@ import { detectAnsibleDocument, parseAnsibleDocument } from '@ansible-lens/core'
 import { TASK_LEVEL_NON_MODULE_KEYS } from './ansible-reference.js';
 import { uriToFsPath } from './workspace-fs.js';
 
+interface LineStructure {
+  readonly indent: number;
+  readonly hasDash: boolean;
+  readonly restAfterDash: string;
+  readonly key: string;
+  readonly value: string;
+}
+
+function isSimpleKeyToken(token: string): boolean {
+  if (token.length === 0) {
+    return false;
+  }
+  for (let i = 0; i < token.length; i++) {
+    const c = token.charCodeAt(i);
+    const isAlphaNum = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+    const isSymbol = c === 95 || c === 46 || c === 45 || c === 39 || c === 34;
+    if (!isAlphaNum && !isSymbol) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isIdentifierToken(token: string): boolean {
+  if (token.length === 0) {
+    return false;
+  }
+  const first = token.charCodeAt(0);
+  const firstOk = (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first === 95;
+  if (!firstOk) {
+    return false;
+  }
+  for (let i = 1; i < token.length; i++) {
+    const c = token.charCodeAt(i);
+    const ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function parseLineStructure(rawLine: string): LineStructure | undefined {
+  let indent = 0;
+  while (indent < rawLine.length) {
+    const c = rawLine.charCodeAt(indent);
+    if (c !== 32 && c !== 9) {
+      break;
+    }
+    indent++;
+  }
+  const trimmed = rawLine.slice(indent).trimEnd();
+  if (trimmed.length === 0 || trimmed.startsWith('#') || trimmed === '---' || trimmed === '...') {
+    return undefined;
+  }
+
+  let hasDash = false;
+  let content = trimmed;
+  if (trimmed === '-' || trimmed.startsWith('- ') || trimmed.startsWith('-\t')) {
+    hasDash = true;
+    content = trimmed.slice(1).trimStart();
+  }
+
+  const colonIdx = content.indexOf(':');
+  if (colonIdx <= 0) {
+    return {
+      indent,
+      hasDash,
+      restAfterDash: content,
+      key: '',
+      value: '',
+    };
+  }
+
+  const candidateKey = content.slice(0, colonIdx).trim();
+  const afterColon = content.slice(colonIdx + 1);
+  if (afterColon.length > 0 && afterColon[0] !== ' ' && afterColon[0] !== '\t') {
+    return {
+      indent,
+      hasDash,
+      restAfterDash: content,
+      key: '',
+      value: '',
+    };
+  }
+
+  if (!isSimpleKeyToken(candidateKey)) {
+    return {
+      indent,
+      hasDash,
+      restAfterDash: content,
+      key: '',
+      value: '',
+    };
+  }
+
+  return {
+    indent,
+    hasDash,
+    restAfterDash: content,
+    key: candidateKey,
+    value: afterColon.trim(),
+  };
+}
+
 /**
  * Evaluates whether a YAML document is Ansible using `@ansible-lens/core` plus
  * Smart Hybrid Activation guards that explicitly exclude Kubernetes, Docker Compose,
@@ -31,11 +136,71 @@ export function evaluateAnsibleHeuristic(
   text: string,
   hasWorkspaceAnsibleCfg: boolean,
 ): AnsibleHeuristicResult {
-  const normalizedPath = uriToFsPath(uri).replace(/\\/g, '/').toLowerCase();
+  const normalizedPath = uriToFsPath(uri).replaceAll('\\', '/').toLowerCase();
+  const lines = text.replaceAll('\r\n', '\n').split('\n');
 
-  // Explicit negative guards for non-Ansible YAML formats
-  const hasK8s = /(?:^|\n)\s*apiVersion\s*:/m.test(text) && /(?:^|\n)\s*kind\s*:/m.test(text);
-  if (hasK8s) {
+  let hasApiVersion = false;
+  let hasKind = false;
+  let hasServices = false;
+  let hasComposeCompanion = false;
+  let hasGhaOn = false;
+  let hasGhaJobs = false;
+  let hasGhaCompanion = false;
+  let hasDashNameOrHosts = false;
+  let hasPlaybookSection = false;
+  let hasDashName = false;
+  let hasTaskContent = false;
+
+  for (const rawLine of lines) {
+    const parsed = parseLineStructure(rawLine);
+    if (!parsed) {
+      continue;
+    }
+    const { key, hasDash } = parsed;
+    if (key === 'apiVersion') {
+      hasApiVersion = true;
+    } else if (key === 'kind') {
+      hasKind = true;
+    } else if (key === 'services') {
+      hasServices = true;
+    } else if (key === 'volumes' || key === 'networks' || key === 'version') {
+      hasComposeCompanion = true;
+    } else if (key === 'on' || key === "'on'" || key === '"on"') {
+      hasGhaOn = true;
+    } else if (key === 'jobs') {
+      hasGhaJobs = true;
+    } else if (key === 'runs-on' || key === 'steps' || key === 'uses') {
+      hasGhaCompanion = true;
+    }
+
+    if (hasDash && (key === 'name' || key === 'hosts')) {
+      hasDashNameOrHosts = true;
+    }
+    if (hasDash && key === 'name') {
+      hasDashName = true;
+    }
+    if (
+      key === 'hosts' ||
+      key === 'tasks' ||
+      key === 'pre_tasks' ||
+      key === 'post_tasks' ||
+      key === 'roles' ||
+      key === 'handlers'
+    ) {
+      hasPlaybookSection = true;
+    }
+    if (
+      key.startsWith('ansible.builtin.') ||
+      key === 'register' ||
+      key === 'when' ||
+      key === 'notify' ||
+      key === 'become'
+    ) {
+      hasTaskContent = true;
+    }
+  }
+
+  if (hasApiVersion && hasKind) {
     return {
       isAnsible: false,
       kind: 'unknown',
@@ -43,14 +208,14 @@ export function evaluateAnsibleHeuristic(
     };
   }
 
-  const hasDockerCompose =
-    /(?:^|\n)\s*services\s*:/m.test(text) &&
-    (/(?:^|\n)\s*(?:volumes|networks|version)\s*:/m.test(text) ||
+  if (
+    hasServices &&
+    (hasComposeCompanion ||
       normalizedPath.endsWith('docker-compose.yml') ||
       normalizedPath.endsWith('docker-compose.yaml') ||
       normalizedPath.endsWith('compose.yml') ||
-      normalizedPath.endsWith('compose.yaml'));
-  if (hasDockerCompose) {
+      normalizedPath.endsWith('compose.yaml'))
+  ) {
     return {
       isAnsible: false,
       kind: 'unknown',
@@ -58,12 +223,11 @@ export function evaluateAnsibleHeuristic(
     };
   }
 
-  const hasGitHubActions =
-    /(?:^|\n)\s*on\s*:/m.test(text) &&
-    /(?:^|\n)\s*jobs\s*:/m.test(text) &&
-    (/(?:^|\n)\s*(?:runs-on|steps|uses)\s*:/m.test(text) ||
-      normalizedPath.includes('/.github/workflows/'));
-  if (hasGitHubActions) {
+  if (
+    hasGhaOn &&
+    hasGhaJobs &&
+    (hasGhaCompanion || normalizedPath.includes('/.github/workflows/'))
+  ) {
     return {
       isAnsible: false,
       kind: 'unknown',
@@ -71,7 +235,6 @@ export function evaluateAnsibleHeuristic(
     };
   }
 
-  // Ask core first
   const coreResult = detectAnsibleDocument(uri, text, hasWorkspaceAnsibleCfg);
 
   const kindFromPath = inferKindFromPath(normalizedPath);
@@ -83,11 +246,7 @@ export function evaluateAnsibleHeuristic(
     };
   }
 
-  // Content heuristics for playbooks & task lists
-  const isPlaybookContent =
-    /(?:^|\n)\s*-\s*(?:name\s*:|hosts\s*:)/m.test(text) &&
-    /(?:^|\n)\s*(?:hosts|tasks|pre_tasks|post_tasks|roles|handlers)\s*:/m.test(text);
-  if (isPlaybookContent) {
+  if (hasDashNameOrHosts && hasPlaybookSection) {
     return {
       isAnsible: true,
       kind: 'playbook',
@@ -95,10 +254,7 @@ export function evaluateAnsibleHeuristic(
     };
   }
 
-  const isTaskListContent =
-    /(?:^|\n)\s*-\s*name\s*:/m.test(text) &&
-    /(?:^|\n)\s*(?:ansible\.builtin\.|register\s*:|when\s*:|notify\s*:|become\s*:)/m.test(text);
-  if (isTaskListContent) {
+  if (hasDashName && hasTaskContent) {
     return {
       isAnsible: true,
       kind: 'tasks',
@@ -114,7 +270,7 @@ export function evaluateAnsibleHeuristic(
     hasWorkspaceAnsibleCfg &&
     (normalizedPath.endsWith('.yml') || normalizedPath.endsWith('.yaml'))
   ) {
-    const inferred = inferPlayOrVarKind(text);
+    const inferred = inferPlayOrVarKind(lines);
     return {
       isAnsible: true,
       kind: inferred,
@@ -125,66 +281,95 @@ export function evaluateAnsibleHeuristic(
   return coreResult;
 }
 
+function isYamlFileName(name: string): boolean {
+  return name.endsWith('.yml') || name.endsWith('.yaml');
+}
+
 function inferKindFromPath(normalizedPath: string): AnsibleDocumentKind {
+  const segments = normalizedPath.split('/').filter((s) => s.length > 0);
+  if (segments.length === 0) {
+    return 'unknown';
+  }
+  const base = segments[segments.length - 1] ?? '';
+  const dirSegments = segments.slice(0, -1);
+  const isYaml = isYamlFileName(base);
+
+  const rolesIdx = dirSegments.lastIndexOf('roles');
+  if (isYaml && rolesIdx !== -1 && rolesIdx + 2 < segments.length) {
+    const section = segments[rolesIdx + 2];
+    if (section === 'tasks') {
+      return 'tasks';
+    }
+    if (section === 'handlers') {
+      return 'handlers';
+    }
+    if (section === 'defaults') {
+      return 'role-defaults';
+    }
+    if (section === 'vars') {
+      return 'role-vars';
+    }
+  }
+
+  if (isYaml && segments.length >= 2) {
+    const parent = segments[segments.length - 2];
+    if (parent === 'tasks') {
+      return 'tasks';
+    }
+    if (parent === 'handlers') {
+      return 'handlers';
+    }
+  }
+
   if (
-    /\/roles\/[^/]+\/tasks\/.*\.ya?ml$/.test(normalizedPath) ||
-    /\/tasks\/[^/]+\.ya?ml$/.test(normalizedPath)
-  ) {
-    return 'tasks';
-  }
-  if (
-    /\/roles\/[^/]+\/handlers\/.*\.ya?ml$/.test(normalizedPath) ||
-    /\/handlers\/[^/]+\.ya?ml$/.test(normalizedPath)
-  ) {
-    return 'handlers';
-  }
-  if (/\/roles\/[^/]+\/defaults\/.*\.ya?ml$/.test(normalizedPath)) {
-    return 'role-defaults';
-  }
-  if (/\/roles\/[^/]+\/vars\/.*\.ya?ml$/.test(normalizedPath)) {
-    return 'role-vars';
-  }
-  if (
-    /\/group_vars\/[^/]+\.ya?ml$/.test(normalizedPath) ||
-    /\/group_vars\/[^/]+\//.test(normalizedPath)
+    dirSegments.includes('group_vars') &&
+    (isYaml || dirSegments.indexOf('group_vars') < dirSegments.length - 1)
   ) {
     return 'group-vars';
   }
   if (
-    /\/host_vars\/[^/]+\.ya?ml$/.test(normalizedPath) ||
-    /\/host_vars\/[^/]+\//.test(normalizedPath)
+    dirSegments.includes('host_vars') &&
+    (isYaml || dirSegments.indexOf('host_vars') < dirSegments.length - 1)
   ) {
     return 'host-vars';
   }
-  const base = path.posix.basename(normalizedPath);
+
   if (
     base === 'site.yml' ||
     base === 'site.yaml' ||
     base === 'playbook.yml' ||
     base === 'playbook.yaml' ||
-    (base === 'main.yml' && /\/playbooks\//.test(normalizedPath)) ||
-    /\/playbooks\/[^/]+\.ya?ml$/.test(normalizedPath)
+    (isYaml && dirSegments.includes('playbooks'))
   ) {
     return 'playbook';
   }
+
   if (
     base === 'hosts.ini' ||
     base === 'inventory.ini' ||
-    /\/inventory\/[^/]+\.ya?ml$/.test(normalizedPath)
+    (isYaml && dirSegments.includes('inventory'))
   ) {
     return 'inventory';
   }
+
   return 'unknown';
 }
 
-function inferPlayOrVarKind(text: string): AnsibleDocumentKind {
-  if (/(?:^|\n)\s*-\s*hosts\s*:/m.test(text) || /(?:^|\n)\s*hosts\s*:/m.test(text)) {
-    return 'playbook';
+function inferPlayOrVarKind(rawLines: readonly string[]): AnsibleDocumentKind {
+  let hasName = false;
+  for (const rawLine of rawLines) {
+    const parsed = parseLineStructure(rawLine);
+    if (!parsed) {
+      continue;
+    }
+    if (parsed.key === 'hosts') {
+      return 'playbook';
+    }
+    if (parsed.hasDash && parsed.key === 'name') {
+      hasName = true;
+    }
   }
-  if (/(?:^|\n)\s*-\s*name\s*:/m.test(text)) {
-    return 'tasks';
-  }
-  return 'unknown';
+  return hasName ? 'tasks' : 'unknown';
 }
 
 function makePos(line: number, column: number, lineStarts: readonly number[]): SourcePosition {
@@ -217,12 +402,38 @@ function computeLineStarts(text: string): number[] {
 function stripQuotes(raw: string): string {
   const trimmed = raw.trim();
   if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
   ) {
     return trimmed.slice(1, -1);
   }
   return trimmed;
+}
+
+function isIntegerString(trimmed: string): boolean {
+  if (trimmed.length === 0) {
+    return false;
+  }
+  const start = trimmed.startsWith('-') ? 1 : 0;
+  if (start >= trimmed.length) {
+    return false;
+  }
+  for (let i = start; i < trimmed.length; i++) {
+    const c = trimmed.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isFloatString(trimmed: string): boolean {
+  const dotIdx = trimmed.indexOf('.');
+  if (dotIdx <= 0 || dotIdx === trimmed.length - 1) {
+    return false;
+  }
+  return isIntegerString(trimmed.slice(0, dotIdx)) && isIntegerString(trimmed.slice(dotIdx + 1));
 }
 
 function parseScalarValue(raw: string): unknown {
@@ -236,10 +447,10 @@ function parseScalarValue(raw: string): unknown {
   if (trimmed === 'false' || trimmed === 'False' || trimmed === 'no') {
     return false;
   }
-  if (/^-?\d+$/.test(trimmed)) {
+  if (isIntegerString(trimmed)) {
     return Number.parseInt(trimmed, 10);
   }
-  if (/^-?\d+\.\d+$/.test(trimmed)) {
+  if (isFloatString(trimmed) && !trimmed.slice(trimmed.indexOf('.') + 1).startsWith('-')) {
     return Number.parseFloat(trimmed);
   }
   return stripQuotes(trimmed);
@@ -247,7 +458,7 @@ function parseScalarValue(raw: string): unknown {
 
 /**
  * Ensures we always have a populated `AnsibleDocumentAst` even when `@ansible-lens/core`'s
- * `parseAnsibleDocument` is still a stub in an isolated worktree.
+ * `parseAnsibleDocument` returns an empty structure on incomplete lines.
  */
 export function parseDocumentWithFallback(
   uri: string,
@@ -347,15 +558,25 @@ function finalizeTask(
   };
 }
 
+const PLAY_SECTION_KEYS = new Set([
+  'vars',
+  'vars_files',
+  'roles',
+  'pre_tasks',
+  'tasks',
+  'post_tasks',
+  'handlers',
+]);
+
 function fallbackExtractAst(
   uri: string,
   text: string,
   kind: AnsibleDocumentKind,
   registry?: IMetadataRegistry,
 ): AnsibleDocumentAst {
-  const normalizedPath = uriToFsPath(uri).replace(/\\/g, '/').toLowerCase();
+  const normalizedPath = uriToFsPath(uri).replaceAll('\\', '/').toLowerCase();
   const effectiveKind = kind !== 'unknown' ? kind : inferKindFromPath(normalizedPath);
-  const lines = text.split(/\r?\n/);
+  const lines = text.replaceAll('\r\n', '\n').split('\n');
   const lineStarts = computeLineStarts(text);
 
   const plays: PlayNode[] = [];
@@ -363,7 +584,6 @@ function fallbackExtractAst(
   const topHandlers: TaskNode[] = [];
   const variables: VariableDeclNode[] = [];
 
-  // Variable file extraction (group_vars, host_vars, role-defaults, role-vars)
   const varSourceKind = mapDocKindToVarSource(effectiveKind, normalizedPath);
   if (
     effectiveKind === 'group-vars' ||
@@ -373,24 +593,22 @@ function fallbackExtractAst(
   ) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? '';
-      if (/^\s*(?:#|---|\.\.\.|\s*$)/.test(line)) {
+      const parsed = parseLineStructure(line);
+      if (!parsed || parsed.indent !== 0 || parsed.hasDash || !isIdentifierToken(parsed.key)) {
         continue;
       }
-      const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(line);
-      if (match) {
-        const key = match[1] ?? '';
-        const rawVal = (match[2] ?? '').trim();
-        const valStart = line.indexOf(':') + 1;
-        const valCol = rawVal.length > 0 ? line.indexOf(rawVal, valStart) : valStart;
-        variables.push({
-          name: key,
-          value: parseScalarValue(rawVal),
-          rawValue: rawVal,
-          keyRange: makeRange(i, 0, key.length, lineStarts),
-          valueRange: makeRange(i, Math.max(valCol, 0), line.length, lineStarts),
-          sourceKind: varSourceKind,
-        });
-      }
+      const key = parsed.key;
+      const rawVal = parsed.value;
+      const valStart = line.indexOf(':') + 1;
+      const valCol = rawVal.length > 0 ? line.indexOf(rawVal, valStart) : valStart;
+      variables.push({
+        name: key,
+        value: parseScalarValue(rawVal),
+        rawValue: rawVal,
+        keyRange: makeRange(i, 0, key.length, lineStarts),
+        valueRange: makeRange(i, Math.max(valCol, 0), line.length, lineStarts),
+        sourceKind: varSourceKind,
+      });
     }
     return {
       uri,
@@ -472,23 +690,21 @@ function fallbackExtractAst(
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
-    if (/^\s*(?:#.*|---|\.\.\.)?\s*$/.test(line)) {
+    const parsed = parseLineStructure(line);
+    if (!parsed) {
       continue;
     }
 
-    const leadingSpaces = /^(\s*)/.exec(line)?.[1]?.length ?? 0;
+    const leadingSpaces = parsed.indent;
 
-    // Play start at indent 0 (`- name:` or `- hosts:`) when in playbook mode or has hosts:
-    const dashMatch = /^(\s*)-\s+(.*)$/.exec(line);
-    if (dashMatch) {
-      const indent = (dashMatch[1] ?? '').length;
-      const rest = dashMatch[2] ?? '';
+    if (parsed.hasDash) {
+      const indent = parsed.indent;
+      const rest = parsed.restAfterDash;
 
-      // Top-level play item
       if (
         indent === 0 &&
         (effectiveKind === 'playbook' ||
-          /^hosts\s*:/.test(rest) ||
+          parsed.key === 'hosts' ||
           (playSection === 'none' && hasPlayKeywordsAhead(lines, i)))
       ) {
         flushPlay(Math.max(0, i - 1));
@@ -504,41 +720,33 @@ function fallbackExtractAst(
           endLine: i,
         };
         playSection = 'none';
-        const kv = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(rest);
-        if (kv) {
-          const key = kv[1] ?? '';
-          const val = (kv[2] ?? '').trim();
-          if (key === 'name') {
-            currentPlay.name = stripQuotes(val);
-          } else if (key === 'hosts') {
-            currentPlay.hosts = stripQuotes(val);
-            const col = line.indexOf(val, line.indexOf(':') + 1);
-            currentPlay.hostsRange = makeRange(i, Math.max(0, col), line.length, lineStarts);
-          }
+        if (parsed.key === 'name') {
+          currentPlay.name = stripQuotes(parsed.value);
+        } else if (parsed.key === 'hosts') {
+          currentPlay.hosts = stripQuotes(parsed.value);
+          const col = line.indexOf(parsed.value, line.indexOf(':') + 1);
+          currentPlay.hostsRange = makeRange(i, Math.max(0, col), line.length, lineStarts);
         }
         continue;
       }
 
-      // List item inside vars_files
       if (currentPlay && playSection === 'vars_files' && indent >= 2) {
         const val = stripQuotes(rest);
         const col = line.indexOf(rest);
         currentPlay.varsFiles.push({
           path: val,
-          range: makeRange(i, col, line.length, lineStarts),
+          range: makeRange(i, Math.max(0, col), line.length, lineStarts),
         });
         continue;
       }
 
-      // List item inside roles
       if (
         currentPlay &&
         playSection === 'roles' &&
         indent >= 2 &&
-        !/^(?:tasks|handlers|pre_tasks|post_tasks|vars|vars_files)\s*:/.test(rest)
+        !PLAY_SECTION_KEYS.has(parsed.key)
       ) {
-        const roleKv = /^role\s*:\s*(.+)$/.exec(rest);
-        const roleName = stripQuotes(roleKv ? (roleKv[1] ?? '') : rest);
+        const roleName = stripQuotes(parsed.key === 'role' ? parsed.value : rest);
         const col = line.indexOf(roleName);
         if (roleName && !roleName.includes(':')) {
           currentPlay.roles.push({
@@ -549,7 +757,6 @@ function fallbackExtractAst(
         continue;
       }
 
-      // List item inside notify:
       if (currentTask && inNotifyList && indent > currentTask.indent) {
         currentTask.endLine = i;
         currentTask.notify = currentTask.notify ?? [];
@@ -557,7 +764,6 @@ function fallbackExtractAst(
         continue;
       }
 
-      // List item inside loop:
       if (currentTask && inLoopList && indent > currentTask.indent) {
         currentTask.endLine = i;
         const arr = Array.isArray(currentTask.loop) ? currentTask.loop : [];
@@ -566,7 +772,6 @@ function fallbackExtractAst(
         continue;
       }
 
-      // Task entry (`- name: ...` or `- ansible.builtin.xxx: ...`)
       if (
         !currentPlay ||
         playSection === 'tasks' ||
@@ -589,10 +794,9 @@ function fallbackExtractAst(
           indent: indent + 2,
           section,
         };
-        const kv = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(rest);
-        if (kv) {
-          const key = kv[1] ?? '';
-          const val = (kv[2] ?? '').trim();
+        if (parsed.key.length > 0) {
+          const key = parsed.key;
+          const val = parsed.value;
           const keyCol = line.indexOf(key, indent);
           applyTaskKeyValue(currentTask, key, val, i, keyCol, line, lineStarts, registry);
           if (!TASK_LEVEL_NON_MODULE_KEYS.has(key) && isLikelyModuleKey(key, registry)) {
@@ -603,87 +807,79 @@ function fallbackExtractAst(
       }
     }
 
-    // Play-level section header or key-value
-    if (currentPlay && leadingSpaces <= 4 && !currentTask) {
-      const kv = /^\s*([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(line);
-      if (kv) {
-        const key = kv[1] ?? '';
-        const val = (kv[2] ?? '').trim();
-        if (key === 'hosts') {
-          currentPlay.hosts = stripQuotes(val);
-          const col = line.indexOf(val, line.indexOf(':') + 1);
-          currentPlay.hostsRange = makeRange(i, Math.max(0, col), line.length, lineStarts);
-          playSection = 'none';
-          continue;
-        }
-        if (key === 'name') {
-          currentPlay.name = stripQuotes(val);
-          continue;
-        }
-        if (key === 'become') {
-          currentPlay.become = parseScalarValue(val) === true;
-          continue;
-        }
-        if (
-          key === 'vars' ||
-          key === 'vars_files' ||
-          key === 'roles' ||
-          key === 'pre_tasks' ||
-          key === 'tasks' ||
-          key === 'post_tasks' ||
-          key === 'handlers'
-        ) {
-          playSection = key;
-          continue;
-        }
+    if (currentPlay && leadingSpaces <= 4 && !currentTask && parsed.key.length > 0) {
+      const key = parsed.key;
+      const val = parsed.value;
+      if (key === 'hosts') {
+        currentPlay.hosts = stripQuotes(val);
+        const col = line.indexOf(val, line.indexOf(':') + 1);
+        currentPlay.hostsRange = makeRange(i, Math.max(0, col), line.length, lineStarts);
+        playSection = 'none';
+        continue;
       }
-    }
-
-    // Play-level section switch even if currentTask was active
-    if (currentPlay && leadingSpaces <= 2) {
-      const secMatch =
-        /^\s*(vars|vars_files|roles|pre_tasks|tasks|post_tasks|handlers)\s*:\s*$/.exec(line);
-      if (secMatch) {
-        flushTask();
-        const sec = secMatch[1] as PlaySection;
-        playSection = sec;
+      if (key === 'name') {
+        currentPlay.name = stripQuotes(val);
+        continue;
+      }
+      if (key === 'become') {
+        currentPlay.become = parseScalarValue(val) === true;
+        continue;
+      }
+      if (
+        key === 'vars' ||
+        key === 'vars_files' ||
+        key === 'roles' ||
+        key === 'pre_tasks' ||
+        key === 'tasks' ||
+        key === 'post_tasks' ||
+        key === 'handlers'
+      ) {
+        playSection = key;
         continue;
       }
     }
 
-    // Play-level vars entries
-    if (currentPlay && playSection === 'vars' && leadingSpaces >= 4) {
-      const varKv = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(line);
-      if (varKv) {
-        const key = varKv[1] ?? '';
-        const rawVal = (varKv[2] ?? '').trim();
-        const keyCol = line.indexOf(key);
-        const valCol =
-          rawVal.length > 0 ? line.indexOf(rawVal, line.indexOf(':') + 1) : line.length;
-        currentPlay.vars[key] = parseScalarValue(rawVal);
-        variables.push({
-          name: key,
-          value: parseScalarValue(rawVal),
-          rawValue: rawVal,
-          keyRange: makeRange(i, keyCol, keyCol + key.length, lineStarts),
-          valueRange: makeRange(i, Math.max(0, valCol), line.length, lineStarts),
-          sourceKind: 'play-vars',
-        });
-        continue;
-      }
+    if (
+      currentPlay &&
+      leadingSpaces <= 2 &&
+      parsed.value.length === 0 &&
+      PLAY_SECTION_KEYS.has(parsed.key)
+    ) {
+      flushTask();
+      playSection = parsed.key as PlaySection;
+      continue;
     }
 
-    // Inside a task
+    if (
+      currentPlay &&
+      playSection === 'vars' &&
+      leadingSpaces >= 4 &&
+      isIdentifierToken(parsed.key)
+    ) {
+      const key = parsed.key;
+      const rawVal = parsed.value;
+      const keyCol = line.indexOf(key);
+      const valCol = rawVal.length > 0 ? line.indexOf(rawVal, line.indexOf(':') + 1) : line.length;
+      currentPlay.vars[key] = parseScalarValue(rawVal);
+      variables.push({
+        name: key,
+        value: parseScalarValue(rawVal),
+        rawValue: rawVal,
+        keyRange: makeRange(i, keyCol, keyCol + key.length, lineStarts),
+        valueRange: makeRange(i, Math.max(0, valCol), line.length, lineStarts),
+        sourceKind: 'play-vars',
+      });
+      continue;
+    }
+
     if (currentTask) {
       currentTask.endLine = i;
-      const kv = /^\s*([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(line);
-      if (kv) {
-        const key = kv[1] ?? '';
-        const rawVal = (kv[2] ?? '').trim();
+      if (parsed.key.length > 0) {
+        const key = parsed.key;
+        const rawVal = parsed.value;
         const keyCol = line.indexOf(key);
 
         if (activeModuleKeyIndent >= 0 && leadingSpaces > activeModuleKeyIndent) {
-          // Parameter of the active module!
           inNotifyList = false;
           inLoopList = false;
           const valCol =
@@ -714,7 +910,6 @@ function fallbackExtractAst(
           continue;
         }
 
-        // Task-level key
         inNotifyList = key === 'notify' && rawVal === '';
         inLoopList = (key === 'loop' || key.startsWith('with_')) && rawVal === '';
         applyTaskKeyValue(currentTask, key, rawVal, i, keyCol, line, lineStarts, registry);
@@ -745,10 +940,21 @@ function fallbackExtractAst(
 function hasPlayKeywordsAhead(lines: readonly string[], startIdx: number): boolean {
   for (let i = startIdx; i < Math.min(lines.length, startIdx + 12); i++) {
     const line = lines[i] ?? '';
-    if (/^\s*(?:hosts|tasks|pre_tasks|post_tasks|roles|handlers)\s*:/.test(line)) {
+    const parsed = parseLineStructure(line);
+    if (!parsed) {
+      continue;
+    }
+    if (
+      parsed.key === 'hosts' ||
+      parsed.key === 'tasks' ||
+      parsed.key === 'pre_tasks' ||
+      parsed.key === 'post_tasks' ||
+      parsed.key === 'roles' ||
+      parsed.key === 'handlers'
+    ) {
       return true;
     }
-    if (i > startIdx && /^-\s+/.test(line)) {
+    if (i > startIdx && parsed.indent === 0 && parsed.hasDash) {
       return false;
     }
   }
@@ -1022,9 +1228,7 @@ export function inferRegisteredVariablesFallback(
 
 /**
  * Clean-room fallback linter when `@ansible-lens/core`'s `lintAnsibleDocument`
- * returns empty in this isolated worktree, ensuring FQCN, unknown-param,
- * missing-required-param, invalid-choice, name-missing, and no-changed-when
- * diagnostics & Quick-Fixes work deterministically.
+ * returns empty in an isolated worktree.
  */
 export function fallbackLintDocument(
   ast: AnsibleDocumentAst,

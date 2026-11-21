@@ -9,7 +9,27 @@ import type {
 import { findClosestMatch } from './similarity.js';
 
 function normalizeSlash(input: string): string {
-  return input.replace(/\\/g, '/');
+  return input.replaceAll('\\', '/');
+}
+
+function trimTrailingSlashes(input: string): string {
+  let end = input.length;
+  while (end > 0 && input.charCodeAt(end - 1) === 47) {
+    end--;
+  }
+  return input.slice(0, end);
+}
+
+function trimBothSlashes(input: string): string {
+  let start = 0;
+  let end = input.length;
+  while (start < end && input.charCodeAt(start) === 47) {
+    start++;
+  }
+  while (end > start && input.charCodeAt(end - 1) === 47) {
+    end--;
+  }
+  return input.slice(start, end);
 }
 
 function joinFsPath(...parts: string[]): string {
@@ -20,9 +40,9 @@ function joinFsPath(...parts: string[]): string {
       continue;
     }
     if (cleaned.length === 0) {
-      cleaned.push(part.replace(/\/+$/, ''));
+      cleaned.push(trimTrailingSlashes(part));
     } else {
-      cleaned.push(part.replace(/^\/+|\/+$/g, ''));
+      cleaned.push(trimBothSlashes(part));
     }
   }
   return cleaned.join('/');
@@ -31,7 +51,7 @@ function joinFsPath(...parts: string[]): string {
 function uriToFsPath(uri: string): string {
   if (uri.startsWith('file:///')) {
     let stripped = decodeURIComponent(uri.slice('file://'.length));
-    if (/^\/[a-zA-Z]:\//.test(stripped)) {
+    if (stripped.length >= 4 && stripped[0] === '/' && stripped[2] === ':' && stripped[3] === '/') {
       stripped = stripped.slice(1);
     }
     return normalizeSlash(stripped);
@@ -64,7 +84,15 @@ function isValidRoleName(roleName: string): boolean {
   if (roleName.includes('..') || roleName.startsWith('/') || roleName.startsWith('\\')) {
     return false;
   }
-  return /^[a-zA-Z0-9_.-]+$/.test(roleName);
+  for (let i = 0; i < roleName.length; i++) {
+    const c = roleName.charCodeAt(i);
+    const isAlphaNum = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+    const isAllowedSymbol = c === 95 || c === 46 || c === 45;
+    if (!isAlphaNum && !isAllowedSymbol) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function resolveRoleDir(
@@ -201,7 +229,7 @@ function collectWorkspaceHandlers(
 
   const rolesDir = joinFsPath(workspaceRoot, 'roles');
   for (const entry of fs.listFiles(rolesDir)) {
-    const cleanEntry = normalizeSlash(entry).replace(/\/+$/, '');
+    const cleanEntry = trimTrailingSlashes(normalizeSlash(entry));
     const roleName = cleanEntry.includes('/')
       ? cleanEntry.slice(cleanEntry.lastIndexOf('/') + 1)
       : cleanEntry;
@@ -259,7 +287,7 @@ function collectInventoryTargets(
 }
 
 function parseIniInventory(content: string, targets: Set<string>): void {
-  const lines = content.split(/\r?\n/);
+  const lines = content.replaceAll('\r\n', '\n').split('\n');
   let inVarsSection = false;
 
   for (const rawLine of lines) {
@@ -267,25 +295,34 @@ function parseIniInventory(content: string, targets: Set<string>): void {
     if (line.length === 0 || line.startsWith('#') || line.startsWith(';')) {
       continue;
     }
-    const sectionMatch = /^\[([^\]]+)\]$/.exec(line);
-    if (sectionMatch) {
-      const section = sectionMatch[1] ?? '';
-      const colonIdx = section.indexOf(':');
-      const groupName = colonIdx === -1 ? section : section.slice(0, colonIdx);
-      const modifier = colonIdx === -1 ? '' : section.slice(colonIdx + 1);
-      inVarsSection = modifier === 'vars';
-      if (groupName.trim().length > 0) {
-        targets.add(groupName.trim());
+    if (line.startsWith('[') && line.endsWith(']') && line.length > 2) {
+      const section = line.slice(1, -1);
+      if (!section.includes('[') && !section.includes(']')) {
+        const colonIdx = section.indexOf(':');
+        const groupName = colonIdx === -1 ? section : section.slice(0, colonIdx);
+        const modifier = colonIdx === -1 ? '' : section.slice(colonIdx + 1);
+        inVarsSection = modifier === 'vars';
+        if (groupName.trim().length > 0) {
+          targets.add(groupName.trim());
+        }
+        continue;
       }
-      continue;
     }
 
     if (inVarsSection) {
       continue;
     }
 
-    const firstToken = line.split(/\s+/)[0];
-    if (firstToken !== undefined && firstToken.length > 0 && !firstToken.includes('=')) {
+    let spaceIdx = -1;
+    for (let i = 0; i < line.length; i++) {
+      const c = line.charCodeAt(i);
+      if (c === 32 || c === 9) {
+        spaceIdx = i;
+        break;
+      }
+    }
+    const firstToken = spaceIdx === -1 ? line : line.slice(0, spaceIdx);
+    if (firstToken.length > 0 && !firstToken.includes('=')) {
       targets.add(firstToken);
     }
   }
@@ -353,7 +390,10 @@ function checkMissingSrcFile(
     return;
   }
 
-  const normalizedSrc = normalizeSlash(srcValue).replace(/^\.\//, '');
+  const rawNormalizedSrc = normalizeSlash(srcValue);
+  const normalizedSrc = rawNormalizedSrc.startsWith('./')
+    ? rawNormalizedSrc.slice(2)
+    : rawNormalizedSrc;
   const subdir = shortMod === 'copy' ? 'files' : 'templates';
   const docParent = dirnamePath(playbookDir);
 
@@ -370,10 +410,16 @@ function checkMissingSrcFile(
   }
 
   // If document is inside roles/<role>/tasks/*.yml, resolve relative to roles/<role>/<subdir>/
-  const roleMatch = /^(.*\/roles\/[^/]+)\//.exec(docPath);
-  if (roleMatch && roleMatch[1]) {
-    candidates.add(joinFsPath(roleMatch[1], subdir, normalizedSrc));
-    candidates.add(joinFsPath(roleMatch[1], normalizedSrc));
+  const rolesMarker = '/roles/';
+  const rolesIdx = docPath.lastIndexOf(rolesMarker);
+  if (rolesIdx !== -1) {
+    const afterRoles = rolesIdx + rolesMarker.length;
+    const nextSlash = docPath.indexOf('/', afterRoles);
+    if (nextSlash !== -1 && nextSlash > afterRoles) {
+      const roleBase = docPath.slice(0, nextSlash);
+      candidates.add(joinFsPath(roleBase, subdir, normalizedSrc));
+      candidates.add(joinFsPath(roleBase, normalizedSrc));
+    }
   }
 
   for (const candidate of candidates) {
@@ -393,8 +439,15 @@ function checkMissingSrcFile(
 
 function splitPlayHostPatterns(hostsExpr: string): readonly string[] {
   return hostsExpr
-    .split(/[:,]/)
-    .map((part) => part.trim().replace(/^[!&]/, ''))
+    .replaceAll(',', ':')
+    .split(':')
+    .map((part) => {
+      const trimmed = part.trim();
+      if (trimmed.startsWith('!') || trimmed.startsWith('&')) {
+        return trimmed.slice(1);
+      }
+      return trimmed;
+    })
     .filter((part) => part.length > 0);
 }
 
