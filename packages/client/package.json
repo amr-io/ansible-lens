@@ -27,7 +27,10 @@
   "activationEvents": [
     "onLanguage:yaml",
     "onLanguage:ansible",
-    "workspaceContains:ansible.cfg"
+    "onLanguage:jinja",
+    "onLanguage:jinja2",
+    "workspaceContains:ansible.cfg",
+    "workspaceContains:**/*.j2"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -43,6 +46,11 @@
           "type": "boolean",
           "default": true,
           "description": "When Ctrl+Click (Go to Definition) on a module name opens its read-only ansible-lens-docs page, show it as a rendered Markdown preview instead of raw Markdown."
+        },
+        "ansibleLens.jinja.autoSpaceBraces": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically pad empty Jinja2 expression braces `{{|}}` to `{{ | }}` when pressing Space, and collapse both spaces back to `{{|}}` when pressing Backspace."
         }
       }
     },

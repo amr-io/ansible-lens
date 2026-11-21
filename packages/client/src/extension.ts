@@ -14,6 +14,7 @@ import {
   ModuleDocsContentProvider,
   showRenderedDocsPreview,
 } from './docs-provider.js';
+import { evaluateJinjaBraceAutoSpace } from './jinja-autospace.js';
 import { createClientLogger, type ClientLogger } from './logger.js';
 
 export const EXTENSION_ID = 'amr-vibe.ansible-lens';
@@ -127,15 +128,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     documentSelector: [
       { scheme: 'file', language: 'yaml' },
       { scheme: 'file', language: 'ansible' },
+      { scheme: 'file', language: 'jinja' },
+      { scheme: 'file', language: 'jinja2' },
+      { scheme: 'file', pattern: '**/*.j2' },
       { scheme: 'untitled', language: 'yaml' },
       { scheme: 'untitled', language: 'ansible' },
+      { scheme: 'untitled', language: 'jinja' },
+      { scheme: 'untitled', language: 'jinja2' },
     ],
     outputChannel,
     initializationOptions: {
       documentLinksEnabled: docLinksEnabled,
     },
     synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{yml,yaml,ini,cfg}'),
+      fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{yml,yaml,ini,cfg,j2}'),
     },
   };
 
@@ -223,6 +229,78 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const active = vscode.window.activeTextEditor;
       if (active && active.document.uri.toString() === doc.uri.toString() && statusBarItem) {
         evaluateEditorActivation(active, statusBarItem, collectionsCount, logger);
+      }
+    }),
+  );
+
+  let isApplyingAutoSpace = false;
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument(async (event) => {
+      if (isApplyingAutoSpace || event.contentChanges.length !== 1) {
+        return;
+      }
+      if (
+        event.reason === vscode.TextDocumentChangeReason.Undo ||
+        event.reason === vscode.TextDocumentChangeReason.Redo
+      ) {
+        return;
+      }
+      const autoSpaceEnabled = vscode.workspace
+        .getConfiguration('ansibleLens')
+        .get<boolean>('jinja.autoSpaceBraces', true);
+      if (!autoSpaceEnabled) {
+        return;
+      }
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.uri.toString() !== event.document.uri.toString()) {
+        return;
+      }
+      const change = event.contentChanges[0];
+      if (!change || change.range.start.line !== change.range.end.line) {
+        return;
+      }
+      const doc = event.document;
+      const hasCfg = isWorkspaceAnsibleEnabled(doc.uri.fsPath);
+      const activation = shouldActivateForDocument(
+        {
+          uri: doc.uri.toString(),
+          languageId: doc.languageId,
+          text: doc.getText(),
+        },
+        hasCfg,
+      );
+      if (!activation.isAnsible) {
+        return;
+      }
+      const lineIdx = change.range.start.line;
+      const lineText = doc.lineAt(lineIdx).text;
+      const reaction = evaluateJinjaBraceAutoSpace(
+        lineText,
+        change.range.start.character,
+        change.rangeLength,
+        change.text,
+      );
+      if (!reaction) {
+        return;
+      }
+      isApplyingAutoSpace = true;
+      try {
+        const editRange = new vscode.Range(
+          new vscode.Position(lineIdx, reaction.replaceStartCol),
+          new vscode.Position(lineIdx, reaction.replaceEndCol),
+        );
+        const applied = await editor.edit(
+          (editBuilder) => {
+            editBuilder.replace(editRange, reaction.newText);
+          },
+          { undoStopBefore: false, undoStopAfter: false },
+        );
+        if (applied) {
+          const cursorPos = new vscode.Position(lineIdx, reaction.cursorCol);
+          editor.selection = new vscode.Selection(cursorPos, cursorPos);
+        }
+      } finally {
+        isApplyingAutoSpace = false;
       }
     }),
   );

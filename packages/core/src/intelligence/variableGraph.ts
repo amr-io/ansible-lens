@@ -249,7 +249,16 @@ export class WorkspaceVariableGraph {
       };
     }
 
-    if (isYaml && parentDir === 'vars') {
+    if (docKind === 'include-vars') {
+      const spec = PRECEDENCE_TABLE['include-vars'];
+      return {
+        sourceKind: 'include-vars',
+        precedenceLevel: spec.level,
+        precedenceLabel: spec.label,
+      };
+    }
+
+    if (docKind === 'vars-files' || (isYaml && parentDir === 'vars')) {
       const spec = PRECEDENCE_TABLE['play-vars-files'];
       return {
         sourceKind: 'play-vars-files',
@@ -337,7 +346,9 @@ export class WorkspaceVariableGraph {
           ast.kind === 'role-vars' ||
           ast.kind === 'group-vars' ||
           ast.kind === 'host-vars' ||
-          ast.kind === 'inventory');
+          ast.kind === 'inventory' ||
+          ast.kind === 'vars-files' ||
+          ast.kind === 'include-vars');
 
       const sourceKind = isDocLevelSource ? docClassification.sourceKind : decl.sourceKind;
       const spec = isDocLevelSource

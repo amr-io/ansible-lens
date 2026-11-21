@@ -1054,6 +1054,10 @@ function variableSourceKindForDocKind(kind: AnsibleDocumentKind): VariableSource
       return 'playbook-host-vars';
     case 'inventory':
       return 'inventory-file';
+    case 'vars-files':
+      return 'play-vars-files';
+    case 'include-vars':
+      return 'include-vars';
     default:
       return 'play-vars';
   }
@@ -1119,7 +1123,10 @@ export function parseAnsibleDocument(
   const topTasks: TaskNode[] = [];
   const topHandlers: TaskNode[] = [];
 
-  if (text.trim().length === 0) {
+  if (text.trim().length === 0 || detectedKind === 'template') {
+    if (detectedKind === 'template' && text.length > 0) {
+      fallbackJinjaScan(text, index, ctx.jinjaBlocks);
+    }
     return {
       uri,
       kind: detectedKind,

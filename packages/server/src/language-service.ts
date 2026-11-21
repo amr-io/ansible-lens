@@ -190,7 +190,11 @@ export class AnsibleLanguageService {
     for (const root of this.workspaceRoots) {
       const files = this.fs.listFiles(root);
       for (const filePath of files) {
-        if (!filePath.endsWith('.yml') && !filePath.endsWith('.yaml')) {
+        if (
+          !filePath.endsWith('.yml') &&
+          !filePath.endsWith('.yaml') &&
+          !filePath.endsWith('.j2')
+        ) {
           continue;
         }
         const uri = fsPathToUri(filePath);
@@ -210,6 +214,7 @@ export class AnsibleLanguageService {
         this.documents.set(uri, { uri, text: content, ast });
       }
     }
+    this.indexReferencedVarsFiles();
     this.rebuildVariableGraph();
     this.logger.info('Workspace indexed', {
       roots: this.workspaceRoots.length,
@@ -223,6 +228,7 @@ export class AnsibleLanguageService {
     const heuristic = evaluateAnsibleHeuristic(uri, text, hasCfg);
     const ast = parseDocumentWithFallback(uri, text, heuristic.kind, this.registry);
     this.documents.set(uri, { uri, text, ast });
+    this.indexReferencedVarsFiles(ast);
     this.rebuildVariableGraph();
   }
 
@@ -370,6 +376,10 @@ export class AnsibleLanguageService {
     // 5. Jinja2 variable completion inside `{{ ...` or `when:`/`changed_when:`/`failed_when:`
     if (inCondition) {
       return withReplaceRange(this.completeVariablesAndMagic(ast), replaceRange);
+    }
+
+    if (heuristic.kind === 'template') {
+      return [];
     }
 
     // 6. Module parameter value choices (`state: `)
@@ -964,6 +974,106 @@ export class AnsibleLanguageService {
     };
   }
 
+  /**
+   * Follows relative paths in `vars_files:` (e.g. `../../versions.yml` in `playbooks/site.yml`)
+   * and `include_vars:` across indexed documents so external shared YAML files feed into
+   * role defaults, tasks, and `.j2` templates.
+   */
+  private indexReferencedVarsFiles(singleAst?: AnsibleDocumentAst): void {
+    const asts = singleAst
+      ? [singleAst]
+      : Array.from(this.documents.values(), (entry) => entry.ast);
+
+    const loadExternalVarsFile = (
+      resolvedPath: string,
+      kind: 'vars-files' | 'include-vars',
+    ): void => {
+      if (!resolvedPath.endsWith('.yml') && !resolvedPath.endsWith('.yaml')) {
+        return;
+      }
+      const targetUri = fsPathToUri(resolvedPath);
+      const existing = this.documents.get(targetUri);
+      if (existing && existing.ast.variables.length > 0) {
+        return;
+      }
+      const content = existing?.text ?? this.fs.readFile(resolvedPath);
+      if (content === undefined) {
+        return;
+      }
+      const parsed = parseDocumentWithFallback(targetUri, content, kind, this.registry);
+      this.documents.set(targetUri, { uri: targetUri, text: content, ast: parsed });
+    };
+
+    for (const ast of asts) {
+      const root = this.findWorkspaceRootForUri(ast.uri) ?? path.dirname(uriToFsPath(ast.uri));
+      const projectCtx = discoverAnsibleProjectContext(ast.uri, root, this.fs);
+
+      for (const play of ast.plays) {
+        for (const vf of play.varsFiles) {
+          if (!vf.path || vf.path.includes('{{')) {
+            continue;
+          }
+          const candidates = [
+            path.resolve(projectCtx.documentDir, vf.path),
+            path.resolve(projectCtx.ansibleRoot, vf.path),
+            path.resolve(root, vf.path),
+          ];
+          for (const candidate of candidates) {
+            if (this.fs.exists(candidate)) {
+              loadExternalVarsFile(candidate, 'vars-files');
+              break;
+            }
+          }
+        }
+      }
+
+      for (const task of collectAllTasks(ast)) {
+        const shortMod = task.moduleName.includes('.')
+          ? task.moduleName.slice(task.moduleName.lastIndexOf('.') + 1)
+          : task.moduleName;
+        if (shortMod !== 'include_vars') {
+          continue;
+        }
+        const fileParam = task.params.find((p) => p.name === 'file');
+        const dirParam = task.params.find((p) => p.name === 'dir');
+        const fileRef =
+          (typeof fileParam?.value === 'string' ? fileParam.value : undefined) ?? task.freeFormArg;
+        if (fileRef && !fileRef.includes('{{')) {
+          const candidates = [
+            path.resolve(projectCtx.documentDir, fileRef),
+            path.resolve(projectCtx.documentDir, 'vars', fileRef),
+            path.resolve(projectCtx.documentDir, '..', 'vars', fileRef),
+            path.resolve(projectCtx.ansibleRoot, fileRef),
+            path.resolve(projectCtx.ansibleRoot, 'vars', fileRef),
+            path.resolve(root, fileRef),
+          ];
+          for (const candidate of candidates) {
+            if (this.fs.exists(candidate)) {
+              loadExternalVarsFile(candidate, 'include-vars');
+              break;
+            }
+          }
+        }
+        if (typeof dirParam?.value === 'string' && !dirParam.value.includes('{{')) {
+          const dirCandidates = [
+            path.resolve(projectCtx.documentDir, dirParam.value),
+            path.resolve(projectCtx.documentDir, '..', dirParam.value),
+            path.resolve(projectCtx.ansibleRoot, dirParam.value),
+            path.resolve(root, dirParam.value),
+          ];
+          for (const dirCandidate of dirCandidates) {
+            if (this.fs.exists(dirCandidate)) {
+              for (const childFile of this.fs.listFiles(dirCandidate)) {
+                loadExternalVarsFile(childFile, 'include-vars');
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
   private rebuildVariableGraph(): void {
     const graph = new WorkspaceVariableGraph();
     for (const entry of this.documents.values()) {
@@ -987,12 +1097,32 @@ export class AnsibleLanguageService {
     this.variableGraph = graph;
   }
 
-  private getRegisteredVariables(ast: AnsibleDocumentAst) {
-    const coreMap = inferRegisteredVariables(ast, this.registry);
-    if (coreMap.size > 0) {
-      return coreMap;
+  private getRegisteredVariables(
+    ast: AnsibleDocumentAst,
+  ): ReadonlyMap<string, InferredRegisteredVariable> {
+    const merged = new Map<string, InferredRegisteredVariable>();
+    const localCore = inferRegisteredVariables(ast, this.registry);
+    const localMap =
+      localCore.size > 0 ? localCore : inferRegisteredVariablesFallback(ast, this.registry);
+    for (const [k, v] of localMap.entries()) {
+      merged.set(k, v);
     }
-    return inferRegisteredVariablesFallback(ast, this.registry);
+    // Include registered variables from indexed workspace documents (role tasks, playbooks)
+    // so `.j2` templates and cross-file task files inherit `register:` variables & return fields.
+    for (const entry of this.documents.values()) {
+      if (entry.uri === ast.uri) {
+        continue;
+      }
+      const entryCore = inferRegisteredVariables(entry.ast, this.registry);
+      const entryMap =
+        entryCore.size > 0 ? entryCore : inferRegisteredVariablesFallback(entry.ast, this.registry);
+      for (const [k, v] of entryMap.entries()) {
+        if (!merged.has(k)) {
+          merged.set(k, v);
+        }
+      }
+    }
+    return merged;
   }
 
   private completeInventoryTargets(uri: string): CompletionItem[] {
@@ -1713,6 +1843,11 @@ function isInsideExpressionOrCondition(
   const lastOpen = beforeCursor.lastIndexOf('{{');
   const lastClose = beforeCursor.lastIndexOf('}}');
   if (lastOpen > lastClose) {
+    return true;
+  }
+  const lastStmtOpen = beforeCursor.lastIndexOf('{%');
+  const lastStmtClose = beforeCursor.lastIndexOf('%}');
+  if (lastStmtOpen > lastStmtClose) {
     return true;
   }
   const key = extractYamlLineKey(fullLine);
