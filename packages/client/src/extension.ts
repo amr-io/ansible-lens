@@ -1,12 +1,15 @@
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import {
+  DidChangeConfigurationNotification,
   LanguageClient,
   TransportKind,
   type LanguageClientOptions,
   type ServerOptions,
 } from 'vscode-languageclient/node.js';
+import type { DiagnosticsInfoReport, ServerSettings } from '@ansible-lens/server';
 import { shouldActivateForDocument, workspaceHasAnsibleCfg } from './activation.js';
 import {
   GET_MODULE_DOCS_REQUEST,
@@ -24,6 +27,7 @@ export const OFFICIAL_DOCS_URL =
 export const COMMAND_OPEN_OFFICIAL_DOCS = 'ansibleLens.openOfficialDocs';
 export const COMMAND_REFRESH_METADATA = 'ansibleLens.refreshMetadata';
 export const COMMAND_CONVERT_FILE_TO_FQCN = 'ansibleLens.convertFileToFqcn';
+export const COMMAND_COPY_DIAGNOSTICS_INFO = 'ansibleLens.copyDiagnosticsInfo';
 
 let client: LanguageClient | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -34,9 +38,16 @@ export function getExtensionId(): string {
 
 /**
  * Formats the status bar text displaying Ansible Lens active state and
- * loaded collection count.
+ * loaded collection count (or a brief download spinner while fetching metadata packs).
  */
-export function formatStatusBarText(active: boolean, collectionsCount: number): string {
+export function formatStatusBarText(
+  active: boolean,
+  collectionsCount: number,
+  downloadingCollections?: readonly string[],
+): string {
+  if (downloadingCollections && downloadingCollections.length > 0) {
+    return `$(sync~spin) Ansible Lens (downloading ${downloadingCollections.join(', ')}...)`;
+  }
   if (!active) {
     return '$(eye) Ansible Lens: Standby';
   }
@@ -44,13 +55,72 @@ export function formatStatusBarText(active: boolean, collectionsCount: number): 
   return `$(eye) Ansible Lens (${collectionsCount} ${suffix})`;
 }
 
+/**
+ * Formats a human-readable diagnostics summary copied to the clipboard by
+ * `Ansible Lens: Copy Diagnostics Info`.
+ */
+export function formatDiagnosticsInfoReport(params: {
+  readonly osPlatform: string;
+  readonly osRelease: string;
+  readonly vscodeVersion: string;
+  readonly extensionVersion: string;
+  readonly serverInfo?: DiagnosticsInfoReport;
+}): string {
+  const info = params.serverInfo;
+  const lines: string[] = [
+    'Ansible Lens Diagnostics Info',
+    '=============================',
+    `OS: ${params.osPlatform} (${params.osRelease})`,
+    `VS Code Version: ${params.vscodeVersion}`,
+    `Extension Version: ${params.extensionVersion}`,
+    `Detected Ansible Root: ${info?.detectedAnsibleRoot ?? 'none'}`,
+    `Workspace Roots: ${info && info.workspaceRoots.length > 0 ? info.workspaceRoots.join(', ') : 'none'}`,
+    `Configured Root Paths: ${info && info.ansibleRootPaths.length > 0 ? info.ansibleRootPaths.join(', ') : 'none'}`,
+    `Loaded Collections (${info?.loadedCollections.length ?? 0}): ${info && info.loadedCollections.length > 0 ? info.loadedCollections.join(', ') : 'none'}`,
+    `Loaded Modules: ${info?.loadedModulesCount ?? 0}`,
+    `Indexed Documents: ${info?.indexedDocumentsCount ?? 0}`,
+    `Indexed Variables: ${info?.indexedVariablesCount ?? 0}`,
+    `Recent Errors: ${info && info.recentErrors.length > 0 ? info.recentErrors.join(' | ') : 'none'}`,
+  ];
+  return lines.join('\n');
+}
+
+function readWorkspaceSettings(): ServerSettings {
+  const cfg = vscode.workspace.getConfiguration('ansibleLens');
+  const profile = cfg.get<'minimal' | 'basic' | 'moderate' | 'production'>(
+    'lint.profile',
+    'moderate',
+  );
+  return {
+    documentLinksEnabled: cfg.get<boolean>('documentLinks.enabled', false),
+    lint: {
+      enabled: cfg.get<boolean>('lint.enabled', true),
+      profile,
+      rules: cfg.get<Readonly<Record<string, 'error' | 'warning' | 'info' | 'off'>>>(
+        'lint.rules',
+        {},
+      ),
+      extraVars: cfg.get<readonly string[]>('lint.extraVars', []),
+    },
+    metadata: {
+      autoDownload: cfg.get<boolean>('metadata.autoDownload', true),
+      manifestUrl: cfg.get<string>(
+        'metadata.manifestUrl',
+        'https://github.com/amr-vibe/ansible-lens/releases/download/metadata-latest/manifest.json',
+      ),
+    },
+    ansibleRootPaths: cfg.get<readonly string[]>('ansible.rootPaths', []),
+  };
+}
+
 function updateStatusBar(
   item: vscode.StatusBarItem,
   active: boolean,
   collectionsCount: number,
   reason?: string,
+  downloadingCollections?: readonly string[],
 ): void {
-  item.text = formatStatusBarText(active, collectionsCount);
+  item.text = formatStatusBarText(active, collectionsCount, downloadingCollections);
   item.tooltip = active
     ? `Ansible Lens active (${collectionsCount} loaded collection(s))${reason ? ` — ${reason}` : ''}`
     : 'Ansible Lens standing by (no active Ansible document)';
@@ -120,10 +190,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   };
 
-  const docLinksEnabled = vscode.workspace
-    .getConfiguration('ansibleLens')
-    .get<boolean>('documentLinks.enabled', false);
-
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       { scheme: 'file', language: 'yaml' },
@@ -137,9 +203,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { scheme: 'untitled', language: 'jinja2' },
     ],
     outputChannel,
-    initializationOptions: {
-      documentLinksEnabled: docLinksEnabled,
-    },
+    initializationOptions: readWorkspaceSettings(),
     synchronize: {
       fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{yml,yaml,ini,cfg,j2}'),
     },
@@ -213,6 +277,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await vscode.workspace.applyEdit(fqcnAction.edit);
         logger.info('Applied Convert File to FQCN edits', { uri: doc.uri.toString() });
       }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(COMMAND_COPY_DIAGNOSTICS_INFO, async () => {
+      const extVersion =
+        (context.extension.packageJSON as { readonly version?: string } | undefined)?.version ??
+        '0.1.1';
+      let serverInfo: DiagnosticsInfoReport | undefined;
+      if (client && client.isRunning()) {
+        try {
+          const activeUri = vscode.window.activeTextEditor?.document.uri.toString();
+          serverInfo = await client.sendRequest<DiagnosticsInfoReport>(
+            'ansibleLens/getDiagnosticsInfo',
+            { activeUri },
+          );
+        } catch (error) {
+          logger.warn('Could not query server diagnostics info', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      const report = formatDiagnosticsInfoReport({
+        osPlatform: os.platform(),
+        osRelease: os.release(),
+        vscodeVersion: vscode.version,
+        extensionVersion: extVersion,
+        ...(serverInfo ? { serverInfo } : {}),
+      });
+      await vscode.env.clipboard.writeText(report);
+      logger.info('Copied Ansible Lens diagnostics info to clipboard');
+      return report;
     }),
   );
 
@@ -307,14 +403,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (event) => {
-      if (event.affectsConfiguration('ansibleLens.documentLinks.enabled') && client) {
-        const enabled = vscode.workspace
-          .getConfiguration('ansibleLens')
-          .get<boolean>('documentLinks.enabled', false);
+      if (event.affectsConfiguration('ansibleLens') && client && client.isRunning()) {
+        const settings = readWorkspaceSettings();
         try {
-          await client.sendRequest('ansibleLens/setDocumentLinksEnabled', { enabled });
+          await client.sendNotification(DidChangeConfigurationNotification.type, {
+            settings: { ansibleLens: settings },
+          });
+          await client.sendRequest('ansibleLens/updateSettings', settings);
         } catch (error) {
-          logger.warn('Failed to update documentLinks.enabled setting on server', {
+          logger.warn('Failed to push updated settings to server', {
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -368,6 +465,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   await client.start();
+
+  context.subscriptions.push(
+    client.onNotification(
+      'ansibleLens/collectionDownloadProgress',
+      (payload: {
+        readonly state: 'downloading' | 'idle';
+        readonly collections: readonly string[];
+        readonly collectionsCount: number;
+      }) => {
+        collectionsCount = payload.collectionsCount;
+        if (!statusBarItem) {
+          return;
+        }
+        if (payload.state === 'downloading') {
+          updateStatusBar(
+            statusBarItem,
+            true,
+            collectionsCount,
+            'Downloading collection metadata',
+            payload.collections,
+          );
+        } else {
+          evaluateEditorActivation(
+            vscode.window.activeTextEditor,
+            statusBarItem,
+            collectionsCount,
+            logger,
+          );
+        }
+      },
+    ),
+  );
+
   try {
     const status = await client.sendRequest<{ collectionsCount: number; modulesCount: number }>(
       'ansibleLens/getMetadataStatus',

@@ -1,6 +1,8 @@
+import os from 'node:os';
 import path from 'node:path';
 import type {
   AnsibleDocumentAst,
+  IMetadataFetcher,
   IWorkspaceFs,
   InferredRegisteredVariable,
   InferredReturnField,
@@ -13,6 +15,9 @@ import type {
   TaskNode,
 } from '@ansible-lens/core';
 import {
+  DEFAULT_MANIFEST_URL,
+  MetadataPackLoader,
+  NodeMetadataFetcher,
   WorkspaceVariableGraph,
   applyLintConfiguration,
   checkProjectIntegrity,
@@ -79,6 +84,29 @@ export interface LintConfiguration {
   readonly extraVars?: readonly string[];
 }
 
+export interface MetadataConfiguration {
+  readonly autoDownload?: boolean;
+  readonly manifestUrl?: string;
+}
+
+export interface ServerSettings {
+  readonly documentLinksEnabled?: boolean;
+  readonly lint?: LintConfiguration;
+  readonly metadata?: MetadataConfiguration;
+  readonly ansibleRootPaths?: readonly string[];
+}
+
+export interface DiagnosticsInfoReport {
+  readonly detectedAnsibleRoot: string | undefined;
+  readonly workspaceRoots: readonly string[];
+  readonly ansibleRootPaths: readonly string[];
+  readonly loadedCollections: readonly string[];
+  readonly loadedModulesCount: number;
+  readonly indexedDocumentsCount: number;
+  readonly indexedVariablesCount: number;
+  readonly recentErrors: readonly string[];
+}
+
 export interface LanguageServiceOptions {
   readonly registry?: MetadataRegistry;
   readonly fs?: IWorkspaceFs;
@@ -86,6 +114,10 @@ export interface LanguageServiceOptions {
   readonly workspaceRoots?: readonly string[];
   readonly documentLinksEnabled?: boolean;
   readonly lintConfig?: LintConfiguration;
+  readonly metadataConfig?: MetadataConfiguration;
+  readonly ansibleRootPaths?: readonly string[];
+  readonly cacheDir?: string;
+  readonly fetcher?: IMetadataFetcher;
 }
 
 interface IndexedDocumentEntry {
@@ -107,12 +139,20 @@ export class AnsibleLanguageService {
   private readonly logger: ServerLogger;
   private readonly documents = new Map<string, IndexedDocumentEntry>();
   private readonly workspaceRoots: string[] = [];
+  private ansibleRootPaths: string[] = [];
   private variableGraph = new WorkspaceVariableGraph();
   private documentLinksEnabled: boolean;
   private lintEnabled = true;
   private lintProfile: 'minimal' | 'basic' | 'moderate' | 'production' = 'moderate';
   private lintRuleOverrides: Readonly<Record<string, LintSeverity | 'off'>> = {};
   private lintExtraVars: readonly string[] = [];
+  private autoDownloadEnabled = true;
+  private manifestUrl: string = DEFAULT_MANIFEST_URL;
+  private readonly cacheDir: string;
+  private readonly fetcher: IMetadataFetcher;
+  private readonly inflightCollections = new Set<string>();
+  private readonly failedCollections = new Set<string>();
+  private readonly recentErrors: string[] = [];
 
   public constructor(options?: LanguageServiceOptions) {
     this.registry = options?.registry ?? createDefaultMetadataRegistry();
@@ -120,14 +160,191 @@ export class AnsibleLanguageService {
     this.fs = options?.fs ?? new NodeWorkspaceFs();
     this.logger = options?.logger ?? createServerLogger('AnsibleLanguageService');
     this.documentLinksEnabled = options?.documentLinksEnabled ?? false;
+    this.cacheDir =
+      options?.cacheDir ?? path.join(os.homedir(), '.cache', 'ansible-lens', 'metadata');
+    this.fetcher = options?.fetcher ?? new NodeMetadataFetcher();
     if (options?.lintConfig) {
       this.setLintConfiguration(options.lintConfig);
+    }
+    if (options?.metadataConfig) {
+      this.setMetadataConfiguration(options.metadataConfig);
+    }
+    if (options?.ansibleRootPaths) {
+      this.setAnsibleRootPaths(options.ansibleRootPaths);
     }
     if (options?.workspaceRoots) {
       for (const root of options.workspaceRoots) {
         this.addWorkspaceRoot(root);
       }
     }
+  }
+
+  public recordError(message: string): void {
+    this.recentErrors.push(message);
+    if (this.recentErrors.length > 20) {
+      this.recentErrors.shift();
+    }
+  }
+
+  public applySettings(settings: ServerSettings): void {
+    if (typeof settings.documentLinksEnabled === 'boolean') {
+      this.setDocumentLinksEnabled(settings.documentLinksEnabled);
+    }
+    if (settings.lint) {
+      this.setLintConfiguration(settings.lint);
+    }
+    if (settings.metadata) {
+      this.setMetadataConfiguration(settings.metadata);
+    }
+    if (settings.ansibleRootPaths) {
+      this.setAnsibleRootPaths(settings.ansibleRootPaths);
+    }
+  }
+
+  public setMetadataConfiguration(config: MetadataConfiguration): void {
+    if (typeof config.autoDownload === 'boolean') {
+      this.autoDownloadEnabled = config.autoDownload;
+    }
+    if (typeof config.manifestUrl === 'string' && config.manifestUrl.trim().length > 0) {
+      this.manifestUrl = config.manifestUrl.trim();
+    }
+  }
+
+  public isAutoDownloadEnabled(): boolean {
+    return this.autoDownloadEnabled;
+  }
+
+  public getManifestUrl(): string {
+    return this.manifestUrl;
+  }
+
+  public setAnsibleRootPaths(rootPaths: readonly string[]): void {
+    const resolved: string[] = [];
+    const baseRoot = this.workspaceRoots[0];
+    for (const p of rootPaths) {
+      if (typeof p !== 'string' || p.trim().length === 0) {
+        continue;
+      }
+      const trimmed = p.trim();
+      const target =
+        baseRoot && !path.isAbsolute(trimmed) && !trimmed.startsWith('/')
+          ? resolveRelativeFsPath(baseRoot, trimmed)
+          : uriToFsPath(trimmed);
+      if (!resolved.includes(target)) {
+        resolved.push(target);
+      }
+    }
+    this.ansibleRootPaths = resolved;
+  }
+
+  public getAnsibleRootPaths(): readonly string[] {
+    return this.ansibleRootPaths;
+  }
+
+  /**
+   * Returns unloaded collection names (`<ns>.<name>`) referenced by FQCN tasks in `uri` / `text`
+   * that have not yet been loaded or permanently failed in this session.
+   */
+  public findUnloadedCollectionsInDocument(uri: string, text?: string): readonly string[] {
+    const docText = text ?? this.documents.get(uri)?.text;
+    if (docText === undefined) {
+      return [];
+    }
+    const hasCfg = this.hasAnsibleCfgForUri(uri);
+    const heuristic = evaluateAnsibleHeuristic(uri, docText, hasCfg);
+    if (!heuristic.isAnsible || heuristic.kind === 'template') {
+      return [];
+    }
+    const ast = parseDocumentWithFallback(uri, docText, heuristic.kind, this.registry);
+    const loaded = new Set(this.registry.listCollections());
+    const unloaded = new Set<string>();
+
+    for (const task of collectAllTasks(ast)) {
+      const col = extractCollectionFromFqcn(task.moduleName);
+      if (
+        col &&
+        col !== 'ansible.builtin' &&
+        col !== 'ansible.legacy' &&
+        !loaded.has(col) &&
+        !this.inflightCollections.has(col) &&
+        !this.failedCollections.has(col)
+      ) {
+        unloaded.add(col);
+      }
+    }
+    return Array.from(unloaded);
+  }
+
+  /**
+   * Lazily downloads and loads the requested collection metadata packs in the background
+   * using `MetadataPackLoader.syncFromManifest` with SHA-256 verification.
+   */
+  public async downloadCollections(collections: readonly string[]): Promise<readonly string[]> {
+    const targets = collections.filter(
+      (c) => !this.inflightCollections.has(c) && !this.registry.listCollections().includes(c),
+    );
+    if (targets.length === 0) {
+      return [];
+    }
+    for (const c of targets) {
+      this.inflightCollections.add(c);
+    }
+    const loadedNow: string[] = [];
+    try {
+      const loader = new MetadataPackLoader(this.cacheDir, this.fetcher);
+      const { packs, result } = await loader.syncFromManifest(this.manifestUrl, targets);
+      for (const [colName, pack] of packs.entries()) {
+        this.registry.loadPack(pack);
+        loadedNow.push(colName);
+      }
+      for (const err of result.errors) {
+        this.recordError(err);
+        this.logger.warn('Metadata pack sync warning', { error: err });
+      }
+      for (const c of targets) {
+        if (!packs.has(c)) {
+          this.failedCollections.add(c);
+        }
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.recordError(`Metadata sync failed: ${msg}`);
+      this.logger.warn('Background collection auto-download failed', {
+        collections: targets,
+        error: msg,
+      });
+      for (const c of targets) {
+        this.failedCollections.add(c);
+      }
+    } finally {
+      for (const c of targets) {
+        this.inflightCollections.delete(c);
+      }
+    }
+    return loadedNow;
+  }
+
+  public getDiagnosticsInfo(activeUri?: string): DiagnosticsInfoReport {
+    let detectedAnsibleRoot: string | undefined;
+    const refUri = activeUri ?? this.documents.keys().next().value;
+    if (refUri) {
+      const root = this.findWorkspaceRootForUri(refUri) ?? path.dirname(uriToFsPath(refUri));
+      detectedAnsibleRoot = discoverAnsibleProjectContext(refUri, root, this.fs).ansibleRoot;
+    } else if (this.ansibleRootPaths[0]) {
+      detectedAnsibleRoot = this.ansibleRootPaths[0];
+    } else if (this.workspaceRoots[0]) {
+      detectedAnsibleRoot = this.workspaceRoots[0];
+    }
+    return {
+      detectedAnsibleRoot,
+      workspaceRoots: [...this.workspaceRoots],
+      ansibleRootPaths: [...this.ansibleRootPaths],
+      loadedCollections: [...this.registry.listCollections()].sort(),
+      loadedModulesCount: this.registry.listModules().length,
+      indexedDocumentsCount: this.documents.size,
+      indexedVariablesCount: this.variableGraph.listVariables().length,
+      recentErrors: [...this.recentErrors],
+    };
   }
 
   public setLintConfiguration(config: LintConfiguration): void {
@@ -187,7 +404,13 @@ export class AnsibleLanguageService {
    * so cross-file variables, handlers, roles, and inventory completions work immediately.
    */
   public indexWorkspace(): void {
-    for (const root of this.workspaceRoots) {
+    const scanRoots = [...this.workspaceRoots];
+    for (const extraRoot of this.ansibleRootPaths) {
+      if (!scanRoots.includes(extraRoot)) {
+        scanRoots.push(extraRoot);
+      }
+    }
+    for (const root of scanRoots) {
       const files = this.fs.listFiles(root);
       for (const filePath of files) {
         if (
@@ -217,7 +440,7 @@ export class AnsibleLanguageService {
     this.indexReferencedVarsFiles();
     this.rebuildVariableGraph();
     this.logger.info('Workspace indexed', {
-      roots: this.workspaceRoots.length,
+      roots: scanRoots.length,
       documents: this.documents.size,
       variables: this.variableGraph.listVariables().length,
     });
@@ -240,6 +463,13 @@ export class AnsibleLanguageService {
 
   public hasAnsibleCfgForUri(uri: string): boolean {
     const fsPath = uriToFsPath(uri);
+    const normDoc = fsPath.replaceAll('\\', '/');
+    for (const customRoot of this.ansibleRootPaths) {
+      const normRoot = customRoot.replaceAll('\\', '/');
+      if (normDoc.startsWith(normRoot)) {
+        return true;
+      }
+    }
     let currentDir = path.dirname(fsPath);
     for (let depth = 0; depth < 8; depth++) {
       if (this.fs.exists(path.join(currentDir, 'ansible.cfg'))) {
@@ -251,7 +481,7 @@ export class AnsibleLanguageService {
       }
       currentDir = parent;
     }
-    for (const root of this.workspaceRoots) {
+    for (const root of [...this.ansibleRootPaths, ...this.workspaceRoots]) {
       if (this.fs.exists(path.join(root, 'ansible.cfg'))) {
         return true;
       }
@@ -1469,8 +1699,14 @@ export class AnsibleLanguageService {
 
   private findWorkspaceRootForUri(uri: string): string | undefined {
     const fsPath = uriToFsPath(uri);
+    const normDoc = fsPath.replaceAll('\\', '/');
+    for (const customRoot of this.ansibleRootPaths) {
+      if (normDoc.startsWith(customRoot.replaceAll('\\', '/'))) {
+        return customRoot;
+      }
+    }
     for (const root of this.workspaceRoots) {
-      if (fsPath.startsWith(root)) {
+      if (fsPath.startsWith(root) || normDoc.startsWith(root.replaceAll('\\', '/'))) {
         return root;
       }
     }
@@ -1485,8 +1721,29 @@ export class AnsibleLanguageService {
       }
       dir = parent;
     }
-    return this.workspaceRoots[0];
+    return this.ansibleRootPaths[0] ?? this.workspaceRoots[0];
   }
+}
+
+/** Extracts `<namespace>.<collection>` from a valid 3+ segment FQCN without regex. */
+function extractCollectionFromFqcn(moduleName: string): string | undefined {
+  const parts = moduleName.split('.');
+  if (parts.length < 3) {
+    return undefined;
+  }
+  for (const part of parts) {
+    if (part.length === 0) {
+      return undefined;
+    }
+    for (let i = 0; i < part.length; i++) {
+      const c = part.charCodeAt(i);
+      const ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+      if (!ok) {
+        return undefined;
+      }
+    }
+  }
+  return `${parts[0]!.toLowerCase()}.${parts[1]!.toLowerCase()}`;
 }
 
 function resolveRelativeFsPath(baseDir: string, ...segments: readonly string[]): string {

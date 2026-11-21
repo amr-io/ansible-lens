@@ -11,7 +11,9 @@ import { extractPythonModuleMetadata } from './pythonExtractor.js';
 
 export {
   computeSha256,
+  DEFAULT_MANIFEST_URL,
   MetadataPackLoader,
+  NodeMetadataFetcher,
   validateCollectionPack,
   validateMetadataManifest,
 } from './packLoader.js';
