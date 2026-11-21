@@ -69,12 +69,22 @@ import {
   formatVariablePrecedenceHoverMarkdown,
 } from './hover-formatter.js';
 import { createServerLogger, type ServerLogger } from './logger.js';
-import {
-  NodeWorkspaceFs,
-  fsPathToUri,
-  normalizeDocumentUri,
-  uriToFsPath,
-} from './workspace-fs.js';
+import { NodeWorkspaceFs, fsPathToUri, normalizeDocumentUri, uriToFsPath } from './workspace-fs.js';
+
+/** A single watched-file change event reported by the LSP client. */
+export interface WatchedFileChange {
+  readonly uri: string;
+  readonly deleted: boolean;
+  /** Optional in-memory buffer text when the changed file is currently open in the editor. */
+  readonly openDocumentText?: string;
+}
+
+/** Summary returned by `AnsibleLanguageService.applyWatchedFileChanges`. */
+export interface WatchedFileBatchResult {
+  readonly needsFullWorkspaceReindex: boolean;
+  readonly affectsSharedProviders: boolean;
+  readonly updatedUris: readonly string[];
+}
 
 export interface InventoryInfo {
   readonly hosts: readonly string[];
@@ -145,6 +155,7 @@ export class AnsibleLanguageService {
   private readonly logger: ServerLogger;
   private readonly documents = new Map<string, IndexedDocumentEntry>();
   private readonly externalVarsFileUris = new Set<string>();
+  private readonly referencedVarsFileUris = new Set<string>();
   private readonly workspaceRoots: string[] = [];
   private ansibleRootPaths: string[] = [];
   private variableGraph = new WorkspaceVariableGraph();
@@ -532,6 +543,165 @@ export class AnsibleLanguageService {
       this.indexReferencedVarsFiles();
       this.rebuildVariableGraph();
     }
+  }
+
+  /**
+   * Determines whether a document can supply variables, handlers, or inventory data to
+   * other open documents in the workspace (e.g. `defaults/`, `vars/`, `group_vars/`,
+   * `host_vars/`, `handlers/`, `inventory`, `site.yml`, `ansible.cfg`, tracked external
+   * `vars_files`, or playbooks/tasks referencing `vars_files:` / `include_vars`).
+   */
+  public isSharedProviderDocument(uri: string, text?: string): boolean {
+    const canonicalUri = normalizeDocumentUri(uri);
+    if (
+      this.externalVarsFileUris.has(canonicalUri) ||
+      this.referencedVarsFileUris.has(canonicalUri)
+    ) {
+      return true;
+    }
+
+    const normPath = uriToFsPath(canonicalUri).replaceAll('\\', '/').toLowerCase();
+    if (/(?:^|\/)(?:defaults|vars|group_vars|host_vars|handlers|inventory)\//.test(normPath)) {
+      return true;
+    }
+
+    const base = path.posix.basename(normPath);
+    if (
+      base === 'site.yml' ||
+      base === 'site.yaml' ||
+      base === 'ansible.cfg' ||
+      base === 'inventory' ||
+      base.startsWith('inventory.') ||
+      base === 'hosts' ||
+      base.startsWith('hosts.')
+    ) {
+      return true;
+    }
+
+    if (text !== undefined && /\b(?:vars_files|include_vars)\b/.test(text)) {
+      return true;
+    }
+
+    const existing = this.documents.get(canonicalUri);
+    if (existing) {
+      if (existing.ast.plays.some((play) => play.varsFiles.length > 0)) {
+        return true;
+      }
+      for (const task of collectAllTasks(existing.ast)) {
+        const shortMod = task.moduleName.includes('.')
+          ? task.moduleName.slice(task.moduleName.lastIndexOf('.') + 1)
+          : task.moduleName;
+        if (shortMod === 'include_vars') {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Incrementally applies a debounced batch of watched-file changes without rescanning
+   * the entire workspace. Only falls back to `indexWorkspace()` if `ansible.cfg` changed.
+   */
+  public applyWatchedFileChanges(
+    changes: ReadonlyArray<WatchedFileChange>,
+  ): WatchedFileBatchResult {
+    const deduped = new Map<string, WatchedFileChange>();
+    for (const change of changes) {
+      const canonicalUri = normalizeDocumentUri(change.uri);
+      deduped.set(canonicalUri, {
+        uri: canonicalUri,
+        deleted: change.deleted,
+        ...(change.openDocumentText !== undefined
+          ? { openDocumentText: change.openDocumentText }
+          : {}),
+      });
+    }
+
+    const updatedUris = Array.from(deduped.keys());
+    if (updatedUris.length === 0) {
+      return {
+        needsFullWorkspaceReindex: false,
+        affectsSharedProviders: false,
+        updatedUris: [],
+      };
+    }
+
+    const isAnsibleCfg = (canonicalUri: string): boolean =>
+      path.posix.basename(uriToFsPath(canonicalUri).replaceAll('\\', '/').toLowerCase()) ===
+      'ansible.cfg';
+
+    const hasAnsibleCfgChange = updatedUris.some(isAnsibleCfg);
+
+    let affectsSharedProviders = hasAnsibleCfgChange;
+    for (const [canonicalUri, change] of deduped.entries()) {
+      if (isAnsibleCfg(canonicalUri)) {
+        continue;
+      }
+
+      if (this.isSharedProviderDocument(canonicalUri, change.openDocumentText)) {
+        affectsSharedProviders = true;
+      }
+
+      if (change.deleted) {
+        this.externalVarsFileUris.delete(canonicalUri);
+        this.documents.delete(canonicalUri);
+        continue;
+      }
+
+      const content =
+        change.openDocumentText !== undefined
+          ? change.openDocumentText
+          : this.fs.readFile(uriToFsPath(canonicalUri));
+      if (content === undefined) {
+        this.externalVarsFileUris.delete(canonicalUri);
+        this.documents.delete(canonicalUri);
+        continue;
+      }
+
+      if (!affectsSharedProviders && this.isSharedProviderDocument(canonicalUri, content)) {
+        affectsSharedProviders = true;
+      }
+
+      const hasCfg = this.hasAnsibleCfgForUri(canonicalUri);
+      const heuristic = evaluateAnsibleHeuristic(canonicalUri, content, hasCfg);
+      if (!heuristic.isAnsible && this.externalVarsFileUris.has(canonicalUri)) {
+        const ast = parseDocumentWithFallback(canonicalUri, content, 'vars-files', this.registry);
+        this.documents.set(canonicalUri, { uri: canonicalUri, text: content, ast });
+      } else if (heuristic.isAnsible) {
+        const ast = parseDocumentWithFallback(canonicalUri, content, heuristic.kind, this.registry);
+        this.documents.set(canonicalUri, { uri: canonicalUri, text: content, ast });
+      } else {
+        this.documents.delete(canonicalUri);
+      }
+    }
+
+    if (hasAnsibleCfgChange) {
+      this.indexWorkspace();
+      return {
+        needsFullWorkspaceReindex: true,
+        affectsSharedProviders: true,
+        updatedUris,
+      };
+    }
+
+    this.indexReferencedVarsFiles();
+    if (
+      !affectsSharedProviders &&
+      updatedUris.some(
+        (u) => this.referencedVarsFileUris.has(u) || this.externalVarsFileUris.has(u),
+      )
+    ) {
+      affectsSharedProviders = true;
+    }
+    this.rebuildVariableGraph();
+
+    return {
+      needsFullWorkspaceReindex: false,
+      affectsSharedProviders,
+      updatedUris,
+    };
   }
 
   public hasAnsibleCfgForUri(uri: string): boolean {
@@ -1263,6 +1433,7 @@ export class AnsibleLanguageService {
   private indexReferencedVarsFiles(): void {
     const asts = Array.from(this.documents.values(), (entry) => entry.ast);
     const activeExternalUris = new Set<string>();
+    this.referencedVarsFileUris.clear();
 
     const loadExternalVarsFile = (
       resolvedPath: string,
@@ -1272,8 +1443,13 @@ export class AnsibleLanguageService {
         return;
       }
       const targetUri = fsPathToUri(resolvedPath);
+      this.referencedVarsFileUris.add(targetUri);
       const existing = this.documents.get(targetUri);
-      if (existing && !this.externalVarsFileUris.has(targetUri) && existing.ast.variables.length > 0) {
+      if (
+        existing &&
+        !this.externalVarsFileUris.has(targetUri) &&
+        existing.ast.variables.length > 0
+      ) {
         return;
       }
       const content = existing?.text ?? this.fs.readFile(resolvedPath);
@@ -1582,7 +1758,8 @@ export class AnsibleLanguageService {
         continue;
       }
       seen.add(name);
-      const bucket = reg.uri === ast.uri || (currentRole !== undefined && regRole === currentRole) ? '0_' : '1_';
+      const bucket =
+        reg.uri === ast.uri || (currentRole !== undefined && regRole === currentRole) ? '0_' : '1_';
       items.push({
         label: name,
         sortText: `${bucket}${name}`,

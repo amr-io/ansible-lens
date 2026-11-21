@@ -19,13 +19,31 @@ import {
   AnsibleLanguageService,
   type DocsCtrlClickBehavior,
   type ServerSettings,
+  type WatchedFileChange,
 } from './language-service.js';
 import { createServerLogger } from './logger.js';
+import { normalizeDocumentUri } from './workspace-fs.js';
+
+/** Default debounce delay (ms) for active-document content changes. */
+export const DEFAULT_CHANGE_DEBOUNCE_MS = 200;
+
+/** Default debounce delay (ms) for watched workspace file events. */
+export const DEFAULT_WATCHED_FILES_DEBOUNCE_MS = 400;
+
+/** Optional tuning knobs for `bindLanguageServer`. */
+export interface BindServerOptions {
+  /** Debounce delay in milliseconds for `documents.onDidChangeContent`. Defaults to `200`. */
+  readonly changeDebounceMs?: number;
+  /** Debounce delay in milliseconds for `connection.onDidChangeWatchedFiles`. Defaults to `400`. */
+  readonly watchedFilesDebounceMs?: number;
+}
 
 export interface BoundServer {
   readonly connection: Connection;
   readonly documents: TextDocuments<TextDocument>;
   readonly service: AnsibleLanguageService;
+  /** Cancels any pending debounce timers owned by this server binding. */
+  dispose(): void;
 }
 
 function parseDocsCtrlClickBehavior(raw: unknown): DocsCtrlClickBehavior | undefined {
@@ -120,6 +138,7 @@ function extractServerSettings(raw: unknown): ServerSettings | undefined {
 export function bindLanguageServer(
   connection: Connection,
   service?: AnsibleLanguageService,
+  options?: BindServerOptions,
 ): BoundServer {
   const logger = createServerLogger('server', connection.console);
   const documents = new TextDocuments(TextDocument);
@@ -129,10 +148,53 @@ export function bindLanguageServer(
       logger,
     });
 
-  const revalidateAllOpenDocuments = (): void => {
+  const changeDebounceMs = Math.max(0, options?.changeDebounceMs ?? DEFAULT_CHANGE_DEBOUNCE_MS);
+  const watchedFilesDebounceMs = Math.max(
+    0,
+    options?.watchedFilesDebounceMs ?? DEFAULT_WATCHED_FILES_DEBOUNCE_MS,
+  );
+
+  const pendingChangeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingWatchedChanges = new Map<string, { uri: string; type: number }>();
+  const lastOpenedVersion = new Map<string, number>();
+  let watchedFilesTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const clearPendingChangeTimer = (uri: string): void => {
+    const existing = pendingChangeTimers.get(uri);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      pendingChangeTimers.delete(uri);
+    }
+  };
+
+  const dispose = (): void => {
+    disposed = true;
+    for (const timer of pendingChangeTimers.values()) {
+      clearTimeout(timer);
+    }
+    pendingChangeTimers.clear();
+    if (watchedFilesTimer !== undefined) {
+      clearTimeout(watchedFilesTimer);
+      watchedFilesTimer = undefined;
+    }
+    pendingWatchedChanges.clear();
+    lastOpenedVersion.clear();
+  };
+
+  const revalidateAllOpenDocuments = (excludeUri?: string): void => {
+    if (disposed) {
+      return;
+    }
+    const canonicalExclude = excludeUri ? normalizeDocumentUri(excludeUri) : undefined;
     for (const openDoc of documents.all()) {
+      if (
+        canonicalExclude !== undefined &&
+        normalizeDocumentUri(openDoc.uri) === canonicalExclude
+      ) {
+        continue;
+      }
       try {
-        engine.updateDocument(openDoc.uri, openDoc.getText());
         const diagnostics = engine.getDiagnostics(openDoc.uri, openDoc.getText());
         connection.sendDiagnostics({ uri: openDoc.uri, diagnostics });
       } catch (error) {
@@ -143,7 +205,7 @@ export function bindLanguageServer(
   };
 
   const triggerSilentAutoDownload = (uri: string, text: string): void => {
-    if (!engine.isAutoDownloadEnabled()) {
+    if (disposed || !engine.isAutoDownloadEnabled()) {
       return;
     }
     const unloaded = engine.findUnloadedCollectionsInDocument(uri, text);
@@ -156,6 +218,9 @@ export function bindLanguageServer(
       collectionsCount: engine.getLoadedCollectionsCount(),
     });
     void engine.downloadCollections(unloaded).then((loaded) => {
+      if (disposed) {
+        return;
+      }
       void connection.sendNotification('ansibleLens/collectionDownloadProgress', {
         state: 'idle',
         collections: loaded,
@@ -168,6 +233,9 @@ export function bindLanguageServer(
   };
 
   const validateDocument = (doc: TextDocument): void => {
+    if (disposed) {
+      return;
+    }
     try {
       const text = doc.getText();
       engine.updateDocument(doc.uri, text);
@@ -177,10 +245,12 @@ export function bindLanguageServer(
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       engine.recordError(msg);
-      logger.error('Failed to validate document', {
-        uri: doc.uri,
-        error: msg,
-      });
+      if (!disposed) {
+        logger.error('Failed to validate document', {
+          uri: doc.uri,
+          error: msg,
+        });
+      }
     }
   };
 
@@ -219,6 +289,14 @@ export function bindLanguageServer(
     };
   });
 
+  connection.onShutdown(() => {
+    dispose();
+  });
+
+  connection.onExit(() => {
+    dispose();
+  });
+
   connection.onDidChangeConfiguration((change) => {
     const parsed = extractServerSettings(change.settings);
     if (parsed) {
@@ -229,43 +307,125 @@ export function bindLanguageServer(
   });
 
   documents.onDidOpen((event) => {
+    lastOpenedVersion.set(event.document.uri, event.document.version);
     validateDocument(event.document);
-    revalidateAllOpenDocuments();
   });
 
   documents.onDidChangeContent((change) => {
-    validateDocument(change.document);
-    revalidateAllOpenDocuments();
+    if (disposed) {
+      return;
+    }
+    const uri = change.document.uri;
+    if (lastOpenedVersion.get(uri) === change.document.version) {
+      lastOpenedVersion.delete(uri);
+      return;
+    }
+    lastOpenedVersion.delete(uri);
+    clearPendingChangeTimer(uri);
+    const timer = setTimeout(() => {
+      pendingChangeTimers.delete(uri);
+      if (disposed) {
+        return;
+      }
+      const latestDoc = documents.get(uri);
+      if (!latestDoc) {
+        return;
+      }
+      const latestText = latestDoc.getText();
+      const wasShared = engine.isSharedProviderDocument(latestDoc.uri, latestText);
+      validateDocument(latestDoc);
+      if (wasShared || engine.isSharedProviderDocument(latestDoc.uri, latestText)) {
+        revalidateAllOpenDocuments(latestDoc.uri);
+      }
+    }, changeDebounceMs);
+    pendingChangeTimers.set(uri, timer);
   });
 
   documents.onDidSave((event) => {
-    engine.updateDocument(event.document.uri, event.document.getText());
-    revalidateAllOpenDocuments();
+    const uri = event.document.uri;
+    clearPendingChangeTimer(uri);
+    const text = event.document.getText();
+    const wasShared = engine.isSharedProviderDocument(uri, text);
+    validateDocument(event.document);
+    if (wasShared || engine.isSharedProviderDocument(uri, text)) {
+      revalidateAllOpenDocuments(uri);
+    }
   });
 
   documents.onDidClose((event) => {
-    engine.closeDocument(event.document.uri);
-    connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
-    revalidateAllOpenDocuments();
+    const uri = event.document.uri;
+    lastOpenedVersion.delete(uri);
+    clearPendingChangeTimer(uri);
+    const wasShared = engine.isSharedProviderDocument(uri);
+    engine.closeDocument(uri);
+    connection.sendDiagnostics({ uri, diagnostics: [] });
+    if (wasShared) {
+      revalidateAllOpenDocuments(uri);
+    }
   });
 
   connection.onDidChangeWatchedFiles((params) => {
+    if (disposed) {
+      return;
+    }
     for (const change of params.changes) {
       // FileChangeType: 1 = Created, 2 = Changed, 3 = Deleted
-      if (change.type === 3) {
-        engine.removeDocument(change.uri);
-        connection.sendDiagnostics({ uri: change.uri, diagnostics: [] });
-      } else {
-        const openDoc = documents.get(change.uri);
-        if (openDoc) {
-          engine.updateDocument(openDoc.uri, openDoc.getText());
+      pendingWatchedChanges.set(normalizeDocumentUri(change.uri), {
+        uri: change.uri,
+        type: change.type,
+      });
+    }
+    if (watchedFilesTimer !== undefined) {
+      clearTimeout(watchedFilesTimer);
+    }
+    watchedFilesTimer = setTimeout(() => {
+      watchedFilesTimer = undefined;
+      if (disposed) {
+        return;
+      }
+      const batch: WatchedFileChange[] = [];
+      const deletedUris: string[] = [];
+      const batchedCanonicalUris = new Set<string>();
+
+      for (const [canonicalUri, entry] of pendingWatchedChanges.entries()) {
+        batchedCanonicalUris.add(canonicalUri);
+        if (entry.type === 3) {
+          deletedUris.push(entry.uri);
+          batch.push({ uri: entry.uri, deleted: true });
         } else {
-          engine.reloadDocumentFromDisk(change.uri);
+          const openDoc =
+            documents.get(entry.uri) ??
+            documents.all().find((d) => normalizeDocumentUri(d.uri) === canonicalUri);
+          batch.push({
+            uri: entry.uri,
+            deleted: false,
+            ...(openDoc ? { openDocumentText: openDoc.getText() } : {}),
+          });
         }
       }
-    }
-    engine.indexWorkspace();
-    revalidateAllOpenDocuments();
+      pendingWatchedChanges.clear();
+
+      for (const uri of deletedUris) {
+        connection.sendDiagnostics({ uri, diagnostics: [] });
+      }
+
+      const result = engine.applyWatchedFileChanges(batch);
+      if (result.needsFullWorkspaceReindex || result.affectsSharedProviders) {
+        revalidateAllOpenDocuments();
+      } else {
+        for (const openDoc of documents.all()) {
+          if (batchedCanonicalUris.has(normalizeDocumentUri(openDoc.uri))) {
+            try {
+              const diagnostics = engine.getDiagnostics(openDoc.uri, openDoc.getText());
+              connection.sendDiagnostics({ uri: openDoc.uri, diagnostics });
+            } catch (error) {
+              const msg = error instanceof Error ? error.message : String(error);
+              engine.recordError(msg);
+            }
+          }
+        }
+      }
+    }, watchedFilesDebounceMs);
   });
 
   connection.onCompletion((params): CompletionItem[] => {
@@ -334,7 +494,7 @@ export function bindLanguageServer(
   });
 
   documents.listen(connection);
-  return { connection, documents, service: engine };
+  return { connection, documents, service: engine, dispose };
 }
 
 /**
