@@ -264,6 +264,166 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
   const diagCode = (d: vscode.Diagnostic): string =>
     typeof d.code === 'object' && d.code !== null ? String(d.code.value) : String(d.code ?? '');
 
+  // 4. notify: LocationLink originSelectionRange (full multi-word phrase) & non-clickability of `- name:` and `# comments`.
+  const notifyItemPos = findLineAndColumn(roleDoc, '- Restart overleaf service');
+  const notifyItemText = roleDoc.lineAt(notifyItemPos.line).text;
+  const handlerPhraseStart = notifyItemText.indexOf('Restart overleaf service');
+  const handlerPhraseEnd = handlerPhraseStart + 'Restart overleaf service'.length;
+  const notifyDefs = await vscode.commands.executeCommand<
+    (vscode.Location | vscode.LocationLink)[]
+  >(
+    'vscode.executeDefinitionProvider',
+    roleDoc.uri,
+    new vscode.Position(notifyItemPos.line, handlerPhraseStart + 10),
+  );
+  assert.equal(notifyDefs?.length, 1);
+  const notifyLink = notifyDefs?.[0] as vscode.LocationLink;
+  assert.ok(notifyLink && 'originSelectionRange' in notifyLink && notifyLink.originSelectionRange);
+  assert.equal(notifyLink.originSelectionRange.start.character, handlerPhraseStart);
+  assert.equal(notifyLink.originSelectionRange.end.character, handlerPhraseEnd);
+
+  const taskNamePos = findLineAndColumn(roleDoc, '- name: Check Overleaf version file');
+  const nameDefs = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
+    'vscode.executeDefinitionProvider',
+    roleDoc.uri,
+    new vscode.Position(taskNamePos.line, 12),
+  );
+  assert.equal(nameDefs?.length ?? 0, 0, '- name: line must never resolve to a notify handler');
+
+  const commentPos = findLineAndColumn(
+    roleDoc,
+    '# Restart overleaf service comment should never be clickable',
+  );
+  const commentDefs = await vscode.commands.executeCommand<
+    (vscode.Location | vscode.LocationLink)[]
+  >(
+    'vscode.executeDefinitionProvider',
+    roleDoc.uri,
+    new vscode.Position(commentPos.line, commentPos.character + 6),
+  );
+  assert.equal(
+    commentDefs?.length ?? 0,
+    0,
+    '# comment line must never resolve to a notify handler',
+  );
+
+  // 5. `undefined-variable` + Levenshtein 1-click Quick-Fix ("Did you mean 'overleaf_ufw_allowed_ports'?").
+  const withTypoVar = [
+    baseText,
+    '',
+    '- name: Typo variable task',
+    '  ansible.builtin.debug:',
+    '    msg: "Port {{ item }}"',
+    '  loop: "{{ overleaf_ufw_allowed_por }}"',
+  ].join('\n');
+  await withTemporaryContent(roleEditor, withTypoVar, async (editedDoc) => {
+    const undefDiag = await waitUntil('undefined-variable diagnostic', async () => {
+      return vscode.languages
+        .getDiagnostics(editedDoc.uri)
+        .find((d) => diagCode(d) === 'undefined-variable');
+    });
+    assert.ok(undefDiag.message.includes("Did you mean 'overleaf_ufw_allowed_ports'?"));
+    const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
+      'vscode.executeCodeActionProvider',
+      editedDoc.uri,
+      undefDiag.range,
+    );
+    assert.ok(
+      actions?.some((a) => a.title.includes("Did you mean 'overleaf_ufw_allowed_ports'?")),
+      'Expected Levenshtein Quick-Fix for undefined-variable',
+    );
+  });
+
+  // 6. `var-naming[no-role-prefix]` in `roles/overleaf/defaults/main.yml` + 1-click Quick-Fix,
+  //    plus live settings update (`ansibleLens.lint.rules` override to `"off"`).
+  const defaultsPath = path.join(workspaceRoot, 'ansible/roles/overleaf/defaults/main.yml');
+  const defaultsEditor = await openInEditor(defaultsPath);
+  const defaultsBase = defaultsEditor.document.getText().trimEnd();
+  const withUnprefixedVar = `${defaultsBase}\nlisten_port: 9000\n`;
+  await withTemporaryContent(defaultsEditor, withUnprefixedVar, async (editedDefaults) => {
+    const prefixDiag = await waitUntil('var-naming[no-role-prefix] diagnostic', async () => {
+      return vscode.languages
+        .getDiagnostics(editedDefaults.uri)
+        .find((d) => diagCode(d) === 'var-naming[no-role-prefix]');
+    });
+    assert.ok(prefixDiag.message.includes('overleaf_listen_port'));
+    const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
+      'vscode.executeCodeActionProvider',
+      editedDefaults.uri,
+      prefixDiag.range,
+    );
+    assert.ok(actions?.some((a) => a.title.includes("Rename to 'overleaf_listen_port'")));
+
+    // Live settings update: disable `var-naming[no-role-prefix]` via workspace configuration
+    const cfg = vscode.workspace.getConfiguration('ansibleLens');
+    await cfg.update(
+      'lint.rules',
+      { 'var-naming[no-role-prefix]': 'off' },
+      vscode.ConfigurationTarget.Global,
+    );
+    try {
+      await waitUntil('var-naming[no-role-prefix] cleared after live setting update', async () => {
+        const remaining = vscode.languages
+          .getDiagnostics(editedDefaults.uri)
+          .filter((d) => diagCode(d) === 'var-naming[no-role-prefix]');
+        return remaining.length === 0 ? true : undefined;
+      });
+    } finally {
+      await cfg.update('lint.rules', undefined, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  // 7. `.j2` template completions inheriting `../../versions.yml` (`overleaf_release_tag`) and role defaults,
+  //    plus Smart `{{ | }}` Auto-Space on Space and Backspace.
+  const templatePath = path.join(workspaceRoot, 'ansible/roles/overleaf/templates/overleaf.rc.j2');
+  const templateEditor = await openInEditor(templatePath);
+  const templateBase = templateEditor.document.getText().trimEnd();
+  const templateProbe = `${templateBase}\nTAG="{{ `;
+  await withTemporaryContent(templateEditor, templateProbe, async (editedTemplate) => {
+    const lastIdx = editedTemplate.lineCount - 1;
+    const cursor = new vscode.Position(lastIdx, editedTemplate.lineAt(lastIdx).text.length);
+    const list = await vscode.commands.executeCommand<vscode.CompletionList>(
+      'vscode.executeCompletionItemProvider',
+      editedTemplate.uri,
+      cursor,
+    );
+    const labels = labelsOf(list);
+    assert.ok(
+      labels.includes('overleaf_release_tag'),
+      `Expected 'overleaf_release_tag' from ../../versions.yml in .j2 completions: [${labels.join(', ')}]`,
+    );
+    assert.ok(labels.includes('overleaf_http_port'));
+  });
+
+  // Smart `{{ | }}` Auto-Space in `.j2` template: insert `' '` inside `{{}}` -> expands to `{{  }}` with cursor centered.
+  const autoSpaceInit = `${templateBase}\nAUTO={{}}`;
+  await withTemporaryContent(templateEditor, autoSpaceInit, async (editedTemplate) => {
+    const lastIdx = editedTemplate.lineCount - 1;
+    const braceCenter = new vscode.Position(lastIdx, 'AUTO={{'.length);
+    await templateEditor.edit((eb) => eb.insert(braceCenter, ' '));
+    await waitUntil('auto-space expansion to {{  }}', async () => {
+      return editedTemplate.lineAt(lastIdx).text === 'AUTO={{  }}' ? true : undefined;
+    });
+    assert.equal(templateEditor.selection.active.character, 'AUTO={{ '.length);
+
+    // Simulate Backspace deleting the leading space inside `{{ | }}` -> collapses both spaces back to `{{}}`.
+    const deleteRange = new vscode.Range(
+      new vscode.Position(lastIdx, 'AUTO={{'.length),
+      new vscode.Position(lastIdx, 'AUTO={{ '.length),
+    );
+    await templateEditor.edit((eb) => eb.delete(deleteRange));
+    await waitUntil('auto-space collapse to {{}} on Backspace', async () => {
+      return editedTemplate.lineAt(lastIdx).text === 'AUTO={{}}' ? true : undefined;
+    });
+  });
+
+  // 8. `Ansible Lens: Copy Diagnostics Info` command returns structured report.
+  const diagReport = await vscode.commands.executeCommand<string>(
+    'ansibleLens.copyDiagnosticsInfo',
+  );
+  assert.ok(diagReport?.includes('Ansible Lens Diagnostics Info'));
+  assert.ok(diagReport?.includes('ansible.builtin'));
+
   const siteEditor = await openInEditor(sitePath);
   await new Promise((r) => setTimeout(r, 400));
   const siteDiags = vscode.languages.getDiagnostics(siteEditor.document.uri);

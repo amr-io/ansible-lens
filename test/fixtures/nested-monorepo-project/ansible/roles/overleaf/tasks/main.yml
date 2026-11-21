@@ -1,8 +1,11 @@
 ---
 - name: Check Overleaf version file
+  # Restart overleaf service comment should never be clickable
   ansible.builtin.stat:
     path: /opt/overleaf/VERSION
   register: overleaf_version_file
+  notify:
+    - Restart overleaf service
 
 - name: Show version when present
   ansible.builtin.debug:
