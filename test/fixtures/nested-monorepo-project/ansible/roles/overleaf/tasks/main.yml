@@ -1,0 +1,17 @@
+---
+- name: Check Overleaf version file
+  ansible.builtin.stat:
+    path: /opt/overleaf/VERSION
+  register: overleaf_version_file
+
+- name: Show version when present
+  ansible.builtin.debug:
+    msg: Overleaf version file exists
+  when: overleaf_version_file.stat.exists
+
+- name: Show version with multi-line condition
+  ansible.builtin.debug:
+    msg: Overleaf version file is a regular file
+  when:
+    - overleaf_version_file.stat.exists
+    - not overleaf_version_file.stat.isdir

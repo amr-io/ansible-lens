@@ -13,3 +13,4 @@ dist/*.js.map
 **/*.ts
 !**/*.d.ts
 *.vsix
+dist/e2e/**

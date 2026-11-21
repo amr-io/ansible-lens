@@ -24,7 +24,8 @@
     "test": "vitest run --coverage",
     "test:unit": "vitest run",
     "package:vsix": "npm --workspace=packages/client run package:vsix",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "test:e2e": "npm --workspace=packages/client run test:e2e"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.5.0",
@@ -33,6 +34,7 @@
     "@types/node": "^22.9.0",
     "@types/vscode": "^1.90.0",
     "@vitest/coverage-v8": "^5.1.1",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^4.1.1",
     "esbuild": "^0.28.2",
     "eslint": "^9.14.0",

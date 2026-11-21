@@ -52,10 +52,12 @@ import {
 } from './ast-fallback.js';
 import { ensureFallbackModulesLoaded } from './fallback-catalog.js';
 import {
+  formatModuleDocsPageMarkdown,
   formatModuleHoverMarkdown,
   formatParameterHoverMarkdown,
   formatRegisteredVarHoverMarkdown,
   formatReturnFieldHoverMarkdown,
+  formatUnloadedModuleDocsPageMarkdown,
   formatVariablePrecedenceHoverMarkdown,
 } from './hover-formatter.js';
 import { createServerLogger, type ServerLogger } from './logger.js';
@@ -246,48 +248,62 @@ export class AnsibleLanguageService {
       return this.completeInventoryTargets(uri);
     }
 
+    // Replace only the identifier fragment being typed (after the last `.`, `|`, space, ...)
+    // so VS Code's YAML word pattern never filters out valid suggestions.
+    const partialPrefix = extractTrailingIdentifier(beforeCursor);
+    const replaceRange: Range = {
+      start: { line: position.line, character: position.character - partialPrefix.length },
+      end: { line: position.line, character: position.character },
+    };
+    const inCondition = isInsideExpressionOrCondition(beforeCursor, line, lines, position.line);
+
     // 2. Dotted access on `ansible_facts.` or registered variables (`my_res.`)
     const dottedMatch = extractTrailingDottedAccess(beforeCursor);
-    if (dottedMatch && isInsideExpressionOrCondition(beforeCursor, line)) {
+    if (dottedMatch && inCondition) {
       const { rootVar, subPath } = dottedMatch;
       if (rootVar === 'ansible_facts') {
-        return ANSIBLE_FACTS_FIELDS.map((f) => ({
+        const facts: CompletionItem[] = ANSIBLE_FACTS_FIELDS.filter((f) =>
+          matchesPrefix(f.name, partialPrefix),
+        ).map((f) => ({
           label: f.name,
           kind: CompletionItemKind.Field,
           detail: `ansible_facts.${f.name} (${f.signature})`,
           documentation: { kind: MarkupKind.Markdown, value: f.description },
         }));
+        return withReplaceRange(facts, replaceRange);
       }
       const regMap = this.getRegisteredVariables(ast);
       const reg = regMap.get(rootVar);
       if (reg) {
-        return this.completeRegisteredFields(reg, subPath);
+        return withReplaceRange(this.completeRegisteredFields(reg, subPath), replaceRange);
       }
     }
 
     // 3. Jinja2 filter completion after `|`
-    if (isFilterCompletionPrefix(beforeCursor)) {
-      return JINJA_FILTERS.map((f) => ({
+    if (isFilterCompletionPrefix(beforeCursor, lines, position.line)) {
+      const filters: CompletionItem[] = JINJA_FILTERS.map((f) => ({
         label: f.name,
         kind: CompletionItemKind.Function,
         detail: f.signature,
         documentation: { kind: MarkupKind.Markdown, value: f.description },
       }));
+      return withReplaceRange(filters, replaceRange);
     }
 
     // 4. Jinja2 test completion after `is ` or `is not `
-    if (/\bis\s+(?:not\s+)?[A-Za-z0-9_]*$/.test(beforeCursor)) {
-      return JINJA_TESTS.map((t) => ({
+    if (isJinjaTestPrefix(beforeCursor, partialPrefix)) {
+      const tests: CompletionItem[] = JINJA_TESTS.map((t) => ({
         label: t.name,
         kind: CompletionItemKind.Keyword,
         detail: t.signature,
         documentation: { kind: MarkupKind.Markdown, value: t.description },
       }));
+      return withReplaceRange(tests, replaceRange);
     }
 
     // 5. Jinja2 variable completion inside `{{ ...` or `when:`/`changed_when:`/`failed_when:`
-    if (isInsideExpressionOrCondition(beforeCursor, line)) {
-      return this.completeVariablesAndMagic(ast);
+    if (inCondition) {
+      return withReplaceRange(this.completeVariablesAndMagic(ast), replaceRange);
     }
 
     // 6. Module parameter value choices (`state: `)
@@ -542,6 +558,18 @@ export class AnsibleLanguageService {
     return links;
   }
 
+  /**
+   * Returns a full rendered Markdown docs page for a module (by FQCN or short name),
+   * served to the client's `ansible-lens-docs:` TextDocumentContentProvider.
+   */
+  public getModuleDocsMarkdown(moduleName: string): string {
+    const mod = this.registry.getModule(moduleName);
+    if (mod) {
+      return formatModuleDocsPageMarkdown(mod);
+    }
+    return formatUnloadedModuleDocsPageMarkdown(moduleName);
+  }
+
   public getDefinition(uri: string, position: Position, text?: string): Location[] {
     const docText = text ?? this.documents.get(uri)?.text;
     if (docText === undefined) {
@@ -610,7 +638,22 @@ export class AnsibleLanguageService {
       }
     }
 
-    // 3. notify: -> matching handler definition across play & workspace
+    // 3. Module name -> read-only rendered docs page (`ansible-lens-docs:` virtual document)
+    for (const moduleTask of collectAllTasks(ast)) {
+      if (isPositionInRange(position, moduleTask.moduleRange)) {
+        const mod = this.registry.getModule(moduleTask.moduleName);
+        if (mod || moduleTask.isFqcn) {
+          return [
+            {
+              uri: buildModuleDocsUri(mod ? mod.fqcn : moduleTask.moduleName),
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            },
+          ];
+        }
+      }
+    }
+
+    // 4. notify: -> matching handler definition across play & workspace
     const task = this.findTaskAtLine(ast, position.line);
     if (task?.notify && task.notify.length > 0 && /notify\s*:|^\s*-\s+/.test(line)) {
       const handlerName = this.extractHandlerNameOnLine(line, task.notify);
@@ -891,18 +934,26 @@ export class AnsibleLanguageService {
     reg: InferredRegisteredVariable,
     subPath: string,
   ): CompletionItem[] {
-    const parts = subPath.split('.').filter((p) => p.length > 0);
-    // Navigate into nested children when user typed e.g. `nginx_stat.stat.`
-    if (subPath.endsWith('.') && parts.length > 0) {
-      const parent = resolveNestedReturnField(reg, parts);
-      if (parent?.children) {
-        return Object.values(parent.children).map((c) => ({
+    // `subPath` is everything after `<var>.`; the final segment is the partial
+    // identifier currently being typed (possibly empty), the rest are parents.
+    const rawParts = subPath.split('.');
+    const partialPrefix = rawParts[rawParts.length - 1] ?? '';
+    const parentParts = rawParts.slice(0, -1).filter((p) => p.length > 0);
+
+    if (parentParts.length > 0) {
+      const parent = resolveNestedReturnField(reg, parentParts);
+      const children = parent?.children;
+      if (!children) {
+        return [];
+      }
+      return Object.values(children)
+        .filter((c) => matchesPrefix(c.name, partialPrefix))
+        .map((c) => ({
           label: c.name,
           kind: CompletionItemKind.Field,
           detail: `${c.type} (${c.returned})`,
           documentation: { kind: MarkupKind.Markdown, value: c.description },
         }));
-      }
     }
 
     const items: CompletionItem[] = [];
@@ -918,6 +969,7 @@ export class AnsibleLanguageService {
     }
     for (const common of COMMON_REGISTER_RETURN_FIELDS) {
       if (!seen.has(common.name)) {
+        seen.add(common.name);
         items.push({
           label: common.name,
           kind: CompletionItemKind.Field,
@@ -937,7 +989,7 @@ export class AnsibleLanguageService {
         },
       });
     }
-    return items;
+    return items.filter((item) => matchesPrefix(item.label, partialPrefix));
   }
 
   private completeVariablesAndMagic(ast: AnsibleDocumentAst): CompletionItem[] {
@@ -1210,7 +1262,11 @@ function extractTrailingDottedAccess(
   return { rootVar, subPath: token.slice(dotIdx + 1) };
 }
 
-function isFilterCompletionPrefix(beforeCursor: string): boolean {
+function isFilterCompletionPrefix(
+  beforeCursor: string,
+  lines?: readonly string[],
+  lineIdx?: number,
+): boolean {
   const pipeIdx = beforeCursor.lastIndexOf('|');
   if (pipeIdx === -1) {
     return false;
@@ -1224,13 +1280,7 @@ function isFilterCompletionPrefix(beforeCursor: string): boolean {
     }
   }
   const beforePipe = beforeCursor.slice(0, pipeIdx);
-  const lastOpen = beforePipe.lastIndexOf('{{');
-  const lastClose = beforePipe.lastIndexOf('}}');
-  if (lastOpen > lastClose) {
-    return true;
-  }
-  const trimmed = beforePipe.trimStart();
-  return trimmed.startsWith('when:') || trimmed.startsWith('when ');
+  return isInsideExpressionOrCondition(beforePipe, beforePipe, lines, lineIdx);
 }
 
 function extractParamValuePrefixKey(beforeCursor: string): string | undefined {
@@ -1324,21 +1374,186 @@ function resolveNestedReturnField(
   return current;
 }
 
-function isInsideExpressionOrCondition(beforeCursor: string, fullLine: string): boolean {
+const CONDITION_KEYS: ReadonlySet<string> = new Set([
+  'when',
+  'changed_when',
+  'failed_when',
+  'until',
+  'that',
+]);
+
+/** Maximum number of lines scanned upward when resolving a multi-line condition's parent key. */
+const MAX_CONDITION_WALK_LINES = 200;
+
+function isYamlSequenceItem(trimmedStart: string): boolean {
+  return trimmedStart === '-' || trimmedStart.startsWith('- ') || trimmedStart.startsWith('-\t');
+}
+
+/** Extracts the mapping key on a YAML line (after an optional `- ` prefix), or `undefined`. */
+function extractYamlLineKey(line: string): string | undefined {
+  let s = line.trimStart();
+  if (isYamlSequenceItem(s)) {
+    s = s.slice(1).trimStart();
+  }
+  const colonIdx = s.indexOf(':');
+  if (colonIdx <= 0) {
+    return undefined;
+  }
+  const key = s.slice(0, colonIdx).trim();
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i);
+    const ok =
+      (c >= 48 && c <= 57) ||
+      (c >= 65 && c <= 90) ||
+      (c >= 97 && c <= 122) ||
+      c === 95 ||
+      c === 46 ||
+      c === 45;
+    if (!ok) {
+      return undefined;
+    }
+  }
+  return key;
+}
+
+/**
+ * Determines whether `lines[lineIdx]` is nested under a `when:` / `changed_when:` /
+ * `failed_when:` / `until:` / `that:` key, e.g. an item of a multi-line `when:` list
+ * or a folded block-scalar continuation line.
+ */
+function isWithinMultiLineCondition(lines: readonly string[], lineIdx: number): boolean {
+  const current = lines[lineIdx] ?? '';
+  const currentIndent = countLeadingSpaces(current);
+  const currentIsItem = isYamlSequenceItem(current.slice(currentIndent));
+  const stop = Math.max(0, lineIdx - MAX_CONDITION_WALK_LINES);
+  for (let i = lineIdx - 1; i >= stop; i--) {
+    const candidate = lines[i] ?? '';
+    const indent = countLeadingSpaces(candidate);
+    const body = candidate.slice(indent);
+    if (body.length === 0 || body.startsWith('#')) {
+      continue;
+    }
+    if (indent > currentIndent) {
+      continue;
+    }
+    const candidateIsItem = isYamlSequenceItem(body);
+    if (indent === currentIndent) {
+      if (currentIsItem && candidateIsItem) {
+        // Sibling list item (`- a` / `- b`) — keep walking to the parent key.
+        continue;
+      }
+      if (!currentIsItem && !candidateIsItem) {
+        if (extractYamlLineKey(candidate) !== undefined) {
+          // Sibling mapping key (e.g. another module parameter) — not a condition.
+          return false;
+        }
+        // Folded/plain multi-line scalar continuation — keep walking.
+        continue;
+      }
+      if (candidateIsItem) {
+        return false;
+      }
+      // `when:` followed by a zero-indented `- item` sequence.
+    }
+    const key = extractYamlLineKey(candidate);
+    return key !== undefined && CONDITION_KEYS.has(key);
+  }
+  return false;
+}
+
+function isInsideExpressionOrCondition(
+  beforeCursor: string,
+  fullLine: string,
+  lines?: readonly string[],
+  lineIdx?: number,
+): boolean {
   const lastOpen = beforeCursor.lastIndexOf('{{');
   const lastClose = beforeCursor.lastIndexOf('}}');
   if (lastOpen > lastClose) {
     return true;
   }
-  const trimmed = fullLine.trimStart();
-  const colonIdx = trimmed.indexOf(':');
-  if (colonIdx > 0) {
-    const key = trimmed.slice(0, colonIdx).trim();
-    if (key === 'when' || key === 'changed_when' || key === 'failed_when' || key === 'until') {
-      return true;
-    }
+  const key = extractYamlLineKey(fullLine);
+  if (key !== undefined && CONDITION_KEYS.has(key)) {
+    return true;
+  }
+  if (lines !== undefined && lineIdx !== undefined) {
+    return isWithinMultiLineCondition(lines, lineIdx);
   }
   return false;
+}
+
+/** Returns the trailing `[A-Za-z0-9_]*` identifier fragment immediately before the cursor. */
+function extractTrailingIdentifier(beforeCursor: string): string {
+  let idx = beforeCursor.length;
+  while (idx > 0) {
+    const c = beforeCursor.charCodeAt(idx - 1);
+    const isId = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+    if (!isId) {
+      break;
+    }
+    idx--;
+  }
+  return beforeCursor.slice(idx);
+}
+
+/**
+ * Attaches an explicit `textEdit` replacing only the identifier fragment being typed,
+ * so VS Code's YAML word pattern (which treats `foo.bar.` as one word) never filters
+ * valid suggestions away.
+ */
+function withReplaceRange(items: CompletionItem[], range: Range): CompletionItem[] {
+  return items.map((item) => {
+    const newText = typeof item.insertText === 'string' ? item.insertText : item.label;
+    return {
+      ...item,
+      filterText: item.filterText ?? item.label,
+      textEdit: { range, newText },
+    };
+  });
+}
+
+function matchesPrefix(name: string, prefix: string): boolean {
+  return prefix.length === 0 || name.toLowerCase().startsWith(prefix.toLowerCase());
+}
+
+function isIdentifierCharCode(c: number): boolean {
+  return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+}
+
+/** Returns true when `head` ends with the standalone word `word` (preceded by a non-identifier). */
+function endsWithWord(head: string, word: string): boolean {
+  if (!head.endsWith(word)) {
+    return false;
+  }
+  const idx = head.length - word.length;
+  return idx === 0 || !isIdentifierCharCode(head.charCodeAt(idx - 1));
+}
+
+/** Detects `... is <partial>` / `... is not <partial>` (Jinja2 test position) without regex. */
+function isJinjaTestPrefix(beforeCursor: string, partialPrefix: string): boolean {
+  const head = beforeCursor.slice(0, beforeCursor.length - partialPrefix.length);
+  const trimmed = head.trimEnd();
+  if (trimmed.length === head.length) {
+    // `is` / `not` must be followed by whitespace.
+    return false;
+  }
+  if (endsWithWord(trimmed, 'is')) {
+    return true;
+  }
+  if (endsWithWord(trimmed, 'not')) {
+    const withoutNot = trimmed.slice(0, -3);
+    const t2 = withoutNot.trimEnd();
+    return t2.length < withoutNot.length && endsWithWord(t2, 'is');
+  }
+  return false;
+}
+
+/** URI scheme of the read-only rendered module docs virtual documents. */
+export const MODULE_DOCS_SCHEME = 'ansible-lens-docs';
+
+/** Builds `ansible-lens-docs://module/<fqcn>.md` for a module name. */
+export function buildModuleDocsUri(moduleName: string): string {
+  return `${MODULE_DOCS_SCHEME}://module/${encodeURIComponent(moduleName)}.md`;
 }
 
 function toLspRange(range: SourceRange): Range {

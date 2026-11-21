@@ -9,5 +9,5 @@
     "scripts/*/src/**/*.ts",
     "scripts/*/test/**/*.ts"
   ],
-  "exclude": ["node_modules", "**/dist", "**/out", "coverage"]
+  "exclude": ["node_modules", "**/dist", "**/out", "coverage", "**/.vscode-test"]
 }

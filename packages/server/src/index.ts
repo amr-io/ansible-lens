@@ -1,7 +1,11 @@
 import { createDefaultMetadataRegistry } from '@ansible-lens/core';
 import { ensureFallbackModulesLoaded } from './fallback-catalog.js';
 
-export { AnsibleLanguageService } from './language-service.js';
+export {
+  AnsibleLanguageService,
+  MODULE_DOCS_SCHEME,
+  buildModuleDocsUri,
+} from './language-service.js';
 export type { InventoryInfo, LanguageServiceOptions } from './language-service.js';
 export { bindLanguageServer, startLanguageServer } from './server.js';
 export type { BoundServer } from './server.js';

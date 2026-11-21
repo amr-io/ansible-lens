@@ -1,0 +1,7 @@
+---
+- name: Configure Overleaf servers
+  hosts: overleaf_servers
+  become: true
+  roles:
+    - common
+    - overleaf

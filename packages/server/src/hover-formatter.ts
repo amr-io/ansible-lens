@@ -3,6 +3,7 @@ import type {
   InferredReturnField,
   ModuleMetadataSpec,
   ModuleOptionSpec,
+  ModuleReturnFieldSpec,
   ResolvedVariable,
 } from '@ansible-lens/core';
 
@@ -159,4 +160,120 @@ function formatDisplayValue(value: unknown, rawValue: string): string {
 
 function shortUriLabel(uri: string): string {
   return uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
+}
+
+function escapeTableCell(text: string): string {
+  return text.replaceAll('\\', '\\\\').replaceAll('|', '\\|').replaceAll('\n', ' ');
+}
+
+/**
+ * Builds the canonical `docs.ansible.com` module URL for an FQCN, used when
+ * a module's collection metadata is not loaded locally.
+ */
+export function buildFallbackModuleDocUrl(fqcn: string): string {
+  const parts = fqcn.split('.');
+  if (parts.length < 3) {
+    return 'https://docs.ansible.com/ansible/latest/collections/index.html';
+  }
+  const [ns, coll, ...rest] = parts;
+  return `https://docs.ansible.com/ansible/latest/collections/${ns ?? ''}/${coll ?? ''}/${rest.join('.')}_module.html`;
+}
+
+function appendOptionRows(
+  lines: string[],
+  docUrl: string,
+  options: Readonly<Record<string, ModuleOptionSpec>>,
+  prefix: string,
+): void {
+  for (const opt of Object.values(options)) {
+    const fullName = `${prefix}${opt.name}`;
+    const anchor = `${docUrl}#parameter-${fullName.replaceAll('.', '/')}`;
+    const req = opt.required ? '**yes**' : 'no';
+    const def =
+      opt.default !== undefined ? `\`${escapeTableCell(JSON.stringify(opt.default))}\`` : '—';
+    const choices =
+      opt.choices && opt.choices.length > 0
+        ? ` Choices: ${opt.choices.map((c) => `\`${escapeTableCell(String(c))}\``).join(', ')}.`
+        : '';
+    lines.push(
+      `| [\`${fullName}\`](${anchor}) | \`${opt.type}\` | ${req} | ${def} | ${escapeTableCell(opt.description)}${choices} |`,
+    );
+    if (opt.suboptions) {
+      appendOptionRows(lines, docUrl, opt.suboptions, `${fullName}.`);
+    }
+  }
+}
+
+function appendReturnItems(
+  lines: string[],
+  docUrl: string,
+  fields: Readonly<Record<string, ModuleReturnFieldSpec>>,
+  prefix: string,
+  depth: number,
+): void {
+  const indent = '  '.repeat(depth);
+  for (const ret of Object.values(fields)) {
+    const fullName = `${prefix}${ret.name}`;
+    const anchor = `${docUrl}#return-${fullName.replaceAll('.', '/')}`;
+    lines.push(
+      `${indent}- [\`${fullName}\`](${anchor}) (\`${ret.type}\`, returned: *${ret.returned}*): ${ret.description.replaceAll('\n', ' ')}`,
+    );
+    if (ret.contains) {
+      appendReturnItems(lines, docUrl, ret.contains, `${fullName}.`, depth + 1);
+    }
+  }
+}
+
+/**
+ * Renders a full, read-only Markdown documentation page for a module. Shown in the
+ * `ansible-lens-docs:` virtual document when the user Ctrl+Clicks a module name.
+ * The clickable `docs.ansible.com` link is always the first line.
+ */
+export function formatModuleDocsPageMarkdown(mod: ModuleMetadataSpec): string {
+  const lines: string[] = [
+    `[Open Official Docs on docs.ansible.com](${mod.docUrl})`,
+    '',
+    `# \`${mod.fqcn}\``,
+    '',
+    `*Collection:* \`${mod.collection}\` · *Short name:* \`${mod.shortName}\``,
+    '',
+  ];
+  if (mod.deprecated) {
+    lines.push('> **Deprecated.** See the official documentation for the replacement.', '');
+  }
+  lines.push(`**${mod.shortDescription}**`, '', mod.description);
+
+  if (Object.keys(mod.options).length > 0) {
+    lines.push('', '## Parameters', '');
+    lines.push('| Name | Type | Required | Default | Description |');
+    lines.push('| --- | --- | --- | --- | --- |');
+    appendOptionRows(lines, mod.docUrl, mod.options, '');
+  }
+
+  if (Object.keys(mod.returnFields).length > 0) {
+    lines.push('', '## Return Values', '');
+    appendReturnItems(lines, mod.docUrl, mod.returnFields, '', 0);
+  }
+
+  lines.push(
+    '',
+    '---',
+    '',
+    '*Rendered offline by Ansible Lens from static metadata. Ansible® is a registered trademark of Red Hat, Inc.*',
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Renders a minimal docs page for a module whose collection metadata is not loaded.
+ */
+export function formatUnloadedModuleDocsPageMarkdown(fqcn: string): string {
+  const url = buildFallbackModuleDocUrl(fqcn);
+  return [
+    `[Open Official Docs on docs.ansible.com](${url})`,
+    '',
+    `# \`${fqcn}\``,
+    '',
+    'Collection metadata for this module is not loaded locally. Run **Ansible Lens: Refresh Metadata** or open the official documentation above.',
+  ].join('\n');
 }

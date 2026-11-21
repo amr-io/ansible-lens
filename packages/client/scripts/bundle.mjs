@@ -49,3 +49,17 @@ if (fs.existsSync(coreDataDir)) {
     fs.copyFileSync(path.join(coreDataDir, entry), path.join(distDataDir, entry));
   }
 }
+
+await esbuild.build({
+  ...sharedOptions,
+  entryPoints: [path.resolve(clientRoot, 'test/e2e/suite.ts')],
+  outfile: path.resolve(clientRoot, 'dist/e2e/suite.cjs'),
+  external: ['vscode'],
+});
+
+await esbuild.build({
+  ...sharedOptions,
+  entryPoints: [path.resolve(clientRoot, 'test/e2e/runTest.ts')],
+  outfile: path.resolve(clientRoot, 'dist/e2e/runTest.cjs'),
+  external: ['@vscode/test-electron'],
+});
