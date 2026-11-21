@@ -31,6 +31,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify package.json version matches git tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CLIENT_VERSION="$(node -p "require('./packages/client/package.json').version")"
+          ROOT_VERSION="$(node -p "require('./package.json').version")"
+          echo "Tag version: ${TAG_VERSION}, client package.json: ${CLIENT_VERSION}, root package.json: ${ROOT_VERSION}"
+          if [ "${TAG_VERSION}" != "${CLIENT_VERSION}" ] || [ "${TAG_VERSION}" != "${ROOT_VERSION}" ]; then
+            echo "::error::Version mismatch: git tag v${TAG_VERSION} does not match package.json (${ROOT_VERSION}) or packages/client/package.json (${CLIENT_VERSION})."
+            exit 1
+          fi
+
       - name: Security audit (high+)
         run: npm audit --audit-level=high
 
