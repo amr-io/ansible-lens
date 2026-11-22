@@ -1168,17 +1168,24 @@ export class AnsibleLanguageService {
     }
 
     // 3. Module name -> read-only rendered docs page (`ansible-lens-docs:` virtual document)
+    //    Return `LocationLink[]` with `originSelectionRange` spanning the full module name
+    //    so Ctrl+Hover highlights the entire FQCN (e.g. `ansible.builtin.stat`) rather than a dot segment.
     if (this.docsCtrlClickBehavior !== 'disabled') {
       for (const moduleTask of collectAllTasks(ast)) {
         if (isPositionInRange(position, moduleTask.moduleRange)) {
           const mod = this.registry.getModule(moduleTask.moduleName);
           if (mod || moduleTask.isFqcn) {
-            return [
-              {
-                uri: buildModuleDocsUri(mod ? mod.fqcn : moduleTask.moduleName),
-                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-              },
-            ];
+            const zeroRange: Range = {
+              start: { line: 0, character: 0 },
+              end: { line: 0, character: 0 },
+            };
+            const link: LocationLink = {
+              originSelectionRange: toLspRange(moduleTask.moduleRange),
+              targetUri: buildModuleDocsUri(mod ? mod.fqcn : moduleTask.moduleName),
+              targetRange: zeroRange,
+              targetSelectionRange: zeroRange,
+            };
+            return [link];
           }
         }
       }
