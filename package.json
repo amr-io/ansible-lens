@@ -2,7 +2,7 @@
   "name": "ansible-lens-monorepo",
   "version": "0.1.2",
   "private": true,
-  "description": "Ansible Lens — Zero-dependency, cross-platform, static-metadata Ansible Language Server & VS Code Extension. Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc.",
+  "description": "Ansible Lens — Cross-platform, static-metadata Ansible Language Server & VS Code Extension with no Python, WSL, or Docker required. Ansible Lens is an independent, community-built extension and is not affiliated with or endorsed by Red Hat, Inc. Ansible® is a registered trademark of Red Hat, Inc.",
   "license": "MIT",
   "repository": {
     "type": "git",

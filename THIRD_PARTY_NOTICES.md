@@ -6,7 +6,7 @@
 
 ## Clean-Room MIT License Guarantee
 
-All parsing, workspace intelligence, static lint rules, and Quick-Fix code actions in Ansible Lens are implemented from scratch in TypeScript using only publicly documented YAML 1.2 and Ansible module/collection specifications. **Zero GPL-licensed source code** (including `ansible/ansible` or `ansible/ansible-lint`) is copied, translated, or derived anywhere in this repository.
+All parsing, workspace intelligence, static lint rules, and Quick-Fix code actions in Ansible Lens are implemented from scratch in TypeScript using only publicly documented YAML 1.2 and Ansible module/collection specifications. **No GPL-licensed source code** (including `ansible/ansible` or `ansible/ansible-lint`) is copied, translated, or derived anywhere in this repository.
 
 ---
 

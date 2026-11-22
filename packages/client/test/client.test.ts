@@ -124,7 +124,7 @@ describe('Ansible Lens VS Code Client — Smart Hybrid Activation, Grammar, Logg
     };
 
     expect(pkgJson.description).toBe(
-      'Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2. Zero Python, WSL, or Docker.',
+      'Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2. No Python, WSL, or Docker.',
     );
     const readmeText = fs.readFileSync(path.join(CLIENT_ROOT, 'README.md'), 'utf8');
     expect(readmeText).toContain('Ansible® is a registered trademark of Red Hat, Inc.');

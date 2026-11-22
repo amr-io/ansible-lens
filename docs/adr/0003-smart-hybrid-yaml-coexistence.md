@@ -17,5 +17,5 @@ Developers regularly work in polyglot repositories containing Kubernetes manifes
 
 ## Consequences
 
-- **Positive:** Zero manual language switching required; zero false-positive diagnostics on Kubernetes, Docker Compose, or GitHub Actions YAML files; seamless coexistence with `redhat.vscode-yaml`.
+- **Positive:** No manual language switching required; no false-positive diagnostics on Kubernetes, Docker Compose, or GitHub Actions YAML files; seamless coexistence with `redhat.vscode-yaml`.
 - **Negative:** Heuristic classification must be fast (< 1ms) and well-tested against diverse YAML formats.

@@ -4,14 +4,14 @@
 
 ## 1. Architectural Vision
 
-**Ansible Lens** (`ansible-lens`) is a zero-dependency, cross-platform, static-metadata Ansible Language Server & VS Code Extension written in pure TypeScript. Unlike traditional Ansible extensions that rely on a local Python runtime, `ansible-core`, `ansible-lint`, WSL, or Docker containers, Ansible Lens runs natively on Windows, macOS, and Linux in pure Node.js/TypeScript with **< 20ms** parse + lint latency.
+**Ansible Lens** (`ansible-lens`) is a standalone, cross-platform, static-metadata Ansible Language Server & VS Code Extension written in pure TypeScript. Unlike traditional Ansible extensions that rely on a local Python runtime, `ansible-core`, `ansible-lint`, WSL, or Docker containers, Ansible Lens runs natively on Windows, macOS, and Linux in pure Node.js/TypeScript with **< 20ms** parse + lint latency.
 
 ## 2. Monorepo Structure & Unidirectional Dependency Flow
 
 ```
 ansible-lens/
 ├── packages/
-│   ├── core/                 # Pure TypeScript domain engine (ZERO vscode imports)
+│   ├── core/                 # Pure TypeScript domain engine (NO vscode imports)
 │   │   └── src/
 │   │       ├── contracts/    # Shared domain types, AST nodes, metadata & lint schemas
 │   │       ├── parser/       # Fault-tolerant YAML CST + Jinja2 tokenizer & AST mapper
@@ -47,7 +47,7 @@ ansible-lens/
 - **Project Integrity Checker:** Validates role references, `tasks/main.yml` presence, `notify:` handler targets, `template`/`copy` `src:` file existence, and `hosts:` targets against inventory.
 
 ### 3.4 Clean-Room Static Linter (`packages/core/src/linter`)
-- 100% MIT clean-room implementation (zero GPL code).
+- 100% MIT clean-room implementation (no GPL code).
 - Rules: `unknown-module` (with Levenshtein "Did you mean?" Quick-Fix), `unknown-param`, `missing-required-param`, `invalid-choice`, `param-type-mismatch`, `fqcn` (with 1-click FQCN expansion Quick-Fix), `name-missing`, `no-changed-when`, `command-instead-of-module`, `package-latest`, `risky-file-permissions`, `deprecated-module`, `hardcoded-secret` (with `!vault` / `no_log: true` Quick-Fix), `yaml-truthy`, and `duplicate-keys`.
 
 ### 3.5 Smart Hybrid Activation (`packages/client`)
