@@ -1,78 +1,64 @@
 # Changelog
 
-All notable changes to **Ansible Lens** will be documented in this file.
+All notable changes to **Ansible Lens** are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 ## [0.1.2] - 2026-11-21
 
-### Fixed
-- **Debounced Diagnostics & Incremental Revalidation (`packages/server`):** Debounced `documents.onDidChangeContent` (~200ms) for the active document, restricted `revalidateAllOpenDocuments()` to shared provider files (`defaults/`, `vars/`, `group_vars/`, `host_vars/`, `handlers/`, `vars_files:`, `site.yml`, `inventory`), removed duplicate revalidation on `onDidOpen`, and debounced `onDidChangeWatchedFiles` (~350ms) with incremental file-only re-indexing.
-- **Zero-Flash `openInBrowser` Ctrl+Click (`packages/client`):** Intercepted `provideDefinition` in `LanguageClient` middleware when `ansibleLens.docs.ctrlClickBehavior` is `"openInBrowser"` so VS Code opens `docs.ansible.com` directly without ever opening or flashing an unrendered `.md` tab.
+### Added
+
+- **Standard Ansible Special & Connection Variables:** Added autocomplete and hover descriptions for everyday built-in variables (`ansible_user`, `ansible_host`, `ansible_port`, `ansible_connection`, `ansible_become`, `ansible_become_user`, `ansible_become_method`, `ansible_python_interpreter`, `ansible_ssh_private_key_file`, `ansible_ssh_common_args`, `inventory_dir`, `inventory_file`, `role_name`, `ansible_role_name`, `ansible_play_name`, `ansible_play_hosts_all`, `ansible_limit`, `ansible_run_tags`, `ansible_skip_tags`, `ansible_env`, `ansible_os_family`, `ansible_distribution`, `ansible_distribution_version`, `ansible_hostname`, `ansible_fqdn`, `ansible_default_ipv4`, `ansible_architecture`, `omit`, and more).
+- **Supply-Chain Verification & Benchmarks:** Releases now include SLSA Build Provenance attestations and a CycloneDX SBOM (`sbom.cdx.json`) alongside `SHA256SUMS.txt`. Added OpenSSF Scorecard analysis and a reproducible benchmark workflow comparing Ansible Lens against `ansible-lint`.
+- **Marketplace Demo GIFs & Social Preview:** Added interactive demo GIFs (autocomplete, hover/docs, lint quick-fixes) to the README and Marketplace listing.
 
 ### Changed
-- **Rebrand to `amr-io` & Marketplace SEO:** Updated publisher (`amr-io`), repository/homepage/bugs URLs, `manifestUrl` default, categories, keywords, gallery banner (`#111827`), crisp 512×512 PNG lens icon rendered from vector SVG, `1280×640` GitHub social preview card (`docs/assets/social-preview.png`), and rewritten `README.md` with comparison table, verified benchmarks (~10.73 ms vs. ~2,622.4 ms `ansible-lint`), and Zero Telemetry commitment.
 
-### Security & CI
-- **SLSA Build Provenance & CycloneDX SBOM:** Updated `.github/workflows/release.yml` to generate `sbom.cdx.json` (`npm sbom --sbom-format cyclonedx`) and attest `.vsix` build provenance via `actions/attest-build-provenance`.
-- **OpenSSF Scorecard & Verifiable Benchmarks:** Added `.github/workflows/scorecard.yml` (`ossf/scorecard-action`) and `.github/workflows/benchmarks.yml` (`scripts/benchmark-playbook.mjs`).
+- **Publisher & Branding:** Moved repository and Marketplace publisher to `amr-io`, refreshed the extension icon with a crisp 512×512 vector render, and polished the VS Code Settings, Features, and Changelog tabs.
+- **README Overhaul:** Rewrote the README with a side-by-side comparison against `redhat.ansible`, verified benchmark numbers (~10.7 ms vs. ~2,622 ms `ansible-lint`), and a Zero Telemetry commitment.
+
+### Fixed
+
+- **Typing Responsiveness:** Debounced live diagnostics while typing and switched file-watcher updates to incremental re-indexing, triggering cross-file revalidation only when shared variable, handler, playbook, or inventory files change.
+- **`openInBrowser` on `Ctrl+Hover`:** Prevented `ansibleLens.docs.ctrlClickBehavior: "openInBrowser"` from opening browser tabs during `Ctrl+Hover` previews; links now open only on click while immediately closing the temporary editor tab.
+- **Full Module Highlight on `Ctrl+Hover`:** `Ctrl+Hover` on module names now highlights the entire FQCN (such as `ansible.builtin.stat`) instead of only a single dot-delimited segment.
 
 ## [0.1.1] - 2026-11-21
 
 ### Added
 
-- **Variable Intelligence Lint Rules & Quick-Fixes (`@ansible-lens/core`, `@ansible-lens/server`):**
-  - Added `undefined-variable` rule detecting typos in Jinja2 variables across playbooks, tasks, and `.j2` templates against the 22-level workspace variable graph, with smart zero-noise exclusions (`item`, `ansible_loop`, custom `loop_control.loop_var`, Ansible magic variables, `ansible_*` facts, Jinja2 keywords/builtins, `{% for %}` / `{% set %}` locals, `| default(...)` / `| d(...)`, `is defined` / `is not defined`, and `ansibleLens.lint.extraVars`) and a 1-click Levenshtein _"Did you mean `<var>`?"_ Quick-Fix.
-  - Added `var-naming[no-role-prefix]` rule warning when variables in `roles/<role>/defaults/`, `roles/<role>/vars/`, or `register:` / `set_fact:` inside `roles/<role>/tasks/` lack the `<role>_` prefix, with a 1-click Quick-Fix to prepend `<role>_`.
-- **`.j2` Template Intelligence, `vars_files:` Traversal & Smart `{{ | }}` Auto-Space (`@ansible-lens/core`, `@ansible-lens/server`, `ansible-lens`):**
-  - Followed relative paths in `vars_files:` (e.g. `../../versions.yml` in `playbooks/site.yml`) and `include_vars:` during workspace indexing so shared external YAML variable files feed into role defaults, tasks, and `.j2` templates.
-  - Activated LSP completions, 22-level variable precedence hover, registered return-field completions, Go-to-Definition, and `undefined-variable` linting inside `*.j2` template files.
-  - Added Smart `{{ | }}` Auto-Space (`ansibleLens.jinja.autoSpaceBraces`, default `true`): pressing `Space` inside `{{|}}` pads both sides to `{{ | }}` keeping the cursor centered; pressing `Backspace` inside empty `{{ | }}` deletes both spaces back to `{{|}}`.
-- **Silent Collection Auto-Download, Expanded Settings & Diagnostics Helper (`ansible-lens`, `@ansible-lens/server`):**
-  - Added background auto-download of unloaded collection metadata packs (e.g. `ansible.posix.json.gz`) on first FQCN encounter (`ansibleLens.metadata.autoDownload`, default `true`) with SHA-256 verification, status-bar spinner, and automatic diagnostic refresh.
-  - Expanded `contributes.configuration` with `ansibleLens.lint.enabled`, `ansibleLens.lint.profile` (`minimal`/`basic`/`moderate`/`production`), `ansibleLens.lint.rules`, `ansibleLens.lint.extraVars`, `ansibleLens.metadata.autoDownload`, `ansibleLens.metadata.manifestUrl`, `ansibleLens.jinja.autoSpaceBraces`, and `ansibleLens.ansible.rootPaths`, wired live via `workspace/didChangeConfiguration`.
-  - Added `Ansible Lens: Copy Diagnostics Info` (`ansibleLens.copyDiagnosticsInfo`) command and ignored `node_modules/`, `.git/`, `.venv/`, `__pycache__/`, and `dist/` during workspace scanning.
-- **Pylance-Style `Ctrl+Click` Module Docs & Nested Monorepo Support:**
-  - Added read-only `ansible-lens-docs:` `TextDocumentContentProvider` and module `DefinitionProvider` so `Ctrl+Click` on any module name opens rendered Markdown documentation with a clickable `docs.ansible.com` link and zero permanent underlines (`ansibleLens.documentLinks.enabled` defaults to `false`).
-  - Added upward `ansible.cfg` (`roles_path`, `inventory`) and directory-marker discovery for nested monorepos, full 90+ collection metadata release dumping, and headless VS Code E2E tests (`@vscode/test-electron`) in CI on Ubuntu and Windows.
-- **Documentation & Release Automation:**
-  - Added `docs/rules.md`, `docs/configuration.md`, `docs/troubleshooting.md`, `.github/release.yml`, `galleryBanner` in `packages/client/package.json`, and a tag/version-sync guard in `.github/workflows/release.yml`.
+- **Variable Lint Rules & Quick-Fixes:**
+  - Added `undefined-variable` detection across playbooks, tasks, and `.j2` templates with smart exclusions (`item`, `ansible_loop`, custom `loop_var`, magic variables, `ansible_*` facts, `{% raw %}...{% endraw %}` blocks, `| default(...)`, `is defined`, and `ansibleLens.lint.extraVars`) plus a 1-click *"Did you mean?"* Quick-Fix.
+  - Added `var-naming[no-role-prefix]` for role `defaults/`, `vars/`, `register:`, and `set_fact:` declarations with a 1-click prefix Quick-Fix.
+- **`.j2` Template Intelligence & `vars_files:` Traversal:** Added completions, 22-level variable precedence hover, Go-to-Definition, and linting inside `*.j2` templates, following relative `vars_files:` and `include_vars:` paths. Added `missing-vars-file` validation and live eviction when `vars_files:` entries change.
+- **Smart `{{ | }}` Auto-Space:** Pressing `Space` inside `{{|}}` pads to `{{ | }}` with the cursor centered, and pressing `Backspace` collapses empty `{{ | }}` back to `{{|}}` (`ansibleLens.jinja.autoSpaceBraces`).
+- **Silent Collection Auto-Download:** Automatically downloads metadata for 90+ Ansible community collections in the background with SHA-256 verification and a status-bar indicator.
+- **Configurable `Ctrl+Click` Module Docs & Zero Permanent Underlines:** Removed permanent link underlines and added `ansibleLens.docs.ctrlClickBehavior` (`renderedPreview`, `openInBrowser`, `disabled`).
+- **Settings, Diagnostics Command & Docs:** Exposed live `ansibleLens.lint.*`, `ansibleLens.metadata.*`, and `ansibleLens.ansible.rootPaths` settings, added `Ansible Lens: Copy Diagnostics Info`, and added `docs/rules.md`, `docs/configuration.md`, and `docs/troubleshooting.md`.
+
+### Changed
+
+- **Scoped Completion Ranking:** Ranked variable completions by scope (current role → shared playbook/`vars_files`/`group_vars`/`host_vars` → other roles' public vars → special/magic vars), excluding other roles' private `register:` variables.
+- **Smaller Extension Package:** Enabled bundle minification and excluded sourcemaps/declarations from the `.vsix`, reducing package size to under 500 KB.
 
 ### Fixed
 
-- **`notify:` Go-to-Definition Leak & Multi-Word Highlight (`@ansible-lens/server`):**
-  - Stopped matching `- name:` lines or falling back to `notifyNames[0]`; handler definitions now resolve strictly when the cursor is inside a `notify:` handler value (excluding `notify:` key, `- name:`, and `# comments`) and return LSP `LocationLink[]` with `originSelectionRange` spanning the entire multi-word handler name.
-- **Completions After `.` & Multi-Line `when:` Lists (`@ansible-lens/server`):**
-  - Attached explicit `textEdit` replacement ranges after `.`, fixed nested partial prefix completion (`webapp_version_file.stat.e`), and walked upward through multi-line `when:` / `changed_when:` / `failed_when:` YAML sequence items.
+- **Disk-Backed Workspace Index:** Closing `defaults/main.yml`, `handlers/main.yml`, or `versions.yml` tabs no longer drops their variables or handlers from cross-file intelligence.
+- **Windows Path & Nested Monorepo Support:** Normalized Windows drive-letter URIs and added upward `ansible.cfg` discovery (`roles_path`, `inventory`) for nested monorepos.
+- **`notify:` Go-to-Definition:** Fixed false matches on `- name:` lines and `# comments`, highlighted full multi-word handler names, and preferred same-role handlers when duplicate names exist across roles.
+- **Dotted & Multi-Line `when:` Completions:** Fixed completions immediately after `.` (including nested prefixes like `my_stat.stat.e`) and inside multi-line `when:` / `changed_when:` / `failed_when:` lists.
 
 ## [0.1.0] - 2026-11-20
 
 ### Added
 
-- **Monorepo & OSS Governance:**
-  - Initialized npm workspace monorepo (`packages/core`, `packages/server`, `packages/client`, `scripts/metadata-builder`) with strict TypeScript, flat ESLint (`--max-warnings=0`), Prettier, Vitest (`>= 80%` coverage thresholds), `commitlint`, and `husky`.
-  - Added `LICENSE` (MIT), `CODE_OF_CONDUCT.md`, `SECURITY.md`, `ARCHITECTURE.md`, and Architecture Decision Records (`docs/adr/0001` through `0004`).
-- **Core Fault-Tolerant Parser (`@ansible-lens/core`):**
-  - Implemented YAML Concrete Syntax Tree (CST) + AST parser (`yaml` with `keepSourceTokens: true`) preserving 0-indexed source ranges on half-typed documents.
-  - Added fault-tolerant Jinja2 lexical scanner supporting `{{ ... }}`, `{% ... %}`, `{# ... #}`, and implicit conditional expressions (`when`, `changed_when`, `failed_when`, `until`).
-  - Added Ansible document classifier (`playbook`, `tasks`, `handlers`, `role-vars`, `role-defaults`, `group-vars`, `host-vars`, `inventory`).
-- **Static Metadata Pack Engine (`@ansible-lens/core` & `@ansible-lens/metadata-builder`):**
-  - Defined `.json.gz` collection metadata pack format, SHA-256 `manifest.json` verification, and offline-bundled `ansible.builtin` pack support.
-  - Added lazy-download support for Top 10 Galaxy collections (`ansible.posix`, `community.general`, `community.docker`, `community.crypto`, `ansible.windows`, `amazon.aws`, `kubernetes.core`, `community.mysql`, `community.postgresql`, `ansible.utils`) and static `.py` `DOCUMENTATION`/`RETURN` docstring extraction.
-- **Workspace Intelligence (`@ansible-lens/core`):**
-  - Added `register:` return-value type inference with `loop:` / `with_*:` `.results[]` and `item` wrapping.
-  - Added 22-level cross-file variable precedence graph indexing role defaults/vars, `group_vars`, `host_vars`, inventory, play/block/task vars, `set_fact`, and `register`.
-  - Added workspace project integrity checker (`missing-role`, `missing-role-tasks`, `missing-handler`, `missing-src-file`, `unknown-inventory-host`).
-- **Clean-Room MIT Linter & Quick-Fixes (`@ansible-lens/core`):**
-  - Implemented static lint rules (`unknown-module`, `unknown-param`, `missing-required-param`, `invalid-choice`, `param-type-mismatch`, `fqcn`, `name-missing`, `no-changed-when`, `command-instead-of-module`, `package-latest`, `risky-file-permissions`, `deprecated-module`, `hardcoded-secret`, `yaml-truthy`, `duplicate-keys`) with 1-click Quick-Fix code actions under a `< 20ms` 300-line playbook latency budget.
-- **LSP Server & VS Code Extension (`@ansible-lens/server`, `ansible-lens`):**
-  - Implemented LSP server supporting Hover, Completion, Go-to-Definition, Find References, DocumentLink, Diagnostics, and CodeAction.
-  - Implemented thin VS Code client with Smart Hybrid Activation (coexisting cleanly with `redhat.vscode-yaml`), MIT Jinja2 TextMate injection grammar, custom lens icon, and `.vsix` packaging.
-- **CI/CD & Documentation:**
-  - Added SHA-pinned GitHub Actions workflows (`ci.yml`, `codeql.yml`, `build-metadata.yml`, `release.yml`), `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, and `THIRD_PARTY_NOTICES.md`.
+- Initial MIT-licensed release of **Ansible Lens** — a zero-dependency TypeScript Ansible Language Server and VS Code extension requiring no Python, WSL, or Docker.
+- Fault-tolerant YAML and Jinja2 parser with sub-20ms linting and 1-click Quick-Fixes (including `Convert File to FQCN`).
+- Offline-bundled `ansible.builtin` metadata, lazy-loaded collection packs with SHA-256 verification, and static `.py` module docstring extraction.
+- `register:` return-value type inference (`loop:`-aware), 22-level cross-file variable precedence hover, and workspace project integrity checks.
+- Smart Hybrid Activation coexisting cleanly with `redhat.vscode-yaml` (ignoring Kubernetes, Docker Compose, and GitHub Actions YAML) plus Jinja2 syntax highlighting.
 
 [Unreleased]: https://github.com/amr-io/ansible-lens/compare/v0.1.2...HEAD
 [0.1.2]: https://github.com/amr-io/ansible-lens/compare/v0.1.1...v0.1.2

@@ -62,6 +62,11 @@ if (fs.existsSync(coreDataDir)) {
   }
 }
 
+const rootChangelog = path.resolve(repoRoot, 'CHANGELOG.md');
+if (fs.existsSync(rootChangelog)) {
+  fs.copyFileSync(rootChangelog, path.resolve(clientRoot, 'CHANGELOG.md'));
+}
+
 await esbuild.build({
   ...sharedOptions,
   sourcemap: true,

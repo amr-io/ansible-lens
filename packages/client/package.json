@@ -40,7 +40,7 @@
         "ansibleLens.lint.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable or disable static Ansible linting and project integrity checks."
+          "description": "Enable static Ansible linting and workspace project integrity checks."
         },
         "ansibleLens.lint.profile": {
           "type": "string",
@@ -50,8 +50,14 @@
             "moderate",
             "production"
           ],
+          "markdownEnumDescriptions": [
+            "Syntax and module schema validation only.",
+            "Minimal checks plus security, idempotency, and undefined-variable detection (excludes role-prefix naming).",
+            "All 24 lint and project integrity rules at their default severities.",
+            "All 24 rules enabled, with all warnings elevated to errors."
+          ],
           "default": "moderate",
-          "description": "Lint strictness profile (`minimal`, `basic`, `moderate`, or `production`). In `production` mode, warning-level lint rules are elevated to errors."
+          "description": "Lint strictness profile controlling active rules and warning severity."
         },
         "ansibleLens.lint.rules": {
           "type": "object",
@@ -65,7 +71,7 @@
               "off"
             ]
           },
-          "description": "Per-rule severity overrides (e.g. `{ \"var-naming[no-role-prefix]\": \"off\", \"package-latest\": \"error\" }`)."
+          "markdownDescription": "Override severity for individual lint rules by rule ID (for example, `{ \"var-naming[no-role-prefix]\": \"off\", \"package-latest\": \"error\" }`)."
         },
         "ansibleLens.lint.extraVars": {
           "type": "array",
@@ -73,22 +79,22 @@
             "type": "string"
           },
           "default": [],
-          "description": "List of extra variable names (passed at runtime via `-e` / `--extra-vars` or CI) to exempt from `undefined-variable` warnings."
+          "markdownDescription": "Variable names passed at runtime (via `-e` / `--extra-vars` or CI) to exempt from `undefined-variable` warnings."
         },
         "ansibleLens.metadata.autoDownload": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically lazy-download unloaded collection metadata packs (e.g. `ansible.posix.json.gz`) in the background on first FQCN encounter with SHA-256 verification."
+          "markdownDescription": "Automatically download unloaded collection metadata packs (such as `ansible.posix`) in the background with SHA-256 verification."
         },
         "ansibleLens.metadata.manifestUrl": {
           "type": "string",
           "default": "https://github.com/amr-io/ansible-lens/releases/download/metadata-latest/manifest.json",
-          "description": "Remote or internal mirror URL for `manifest.json` and `.json.gz` collection metadata packs."
+          "markdownDescription": "Remote or internal mirror URL for `manifest.json` and `.json.gz` collection metadata packs."
         },
         "ansibleLens.jinja.autoSpaceBraces": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically pad empty Jinja2 expression braces `{{|}}` to `{{ | }}` when pressing Space, and collapse both spaces back to `{{|}}` when pressing Backspace."
+          "markdownDescription": "Pad empty Jinja2 braces `{{|}}` to `{{ | }}` on Space and collapse both spaces back to `{{|}}` on Backspace."
         },
         "ansibleLens.ansible.rootPaths": {
           "type": "array",
@@ -96,7 +102,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Explicit Ansible project root directories (relative to the workspace root or absolute) for monorepos that do not contain an `ansible.cfg`."
+          "markdownDescription": "Explicit Ansible project root directories (relative to the workspace root or absolute) for monorepos without an `ansible.cfg`."
         },
         "ansibleLens.docs.ctrlClickBehavior": {
           "type": "string",
@@ -105,27 +111,36 @@
             "openInBrowser",
             "disabled"
           ],
+          "markdownEnumDescriptions": [
+            "Open rendered Markdown documentation inside VS Code.",
+            "Open the module's official `docs.ansible.com` page in your default browser.",
+            "Disable Ctrl+Click navigation on Ansible module names."
+          ],
           "default": "renderedPreview",
-          "description": "Controls what happens when you Ctrl+Click (Go to Definition) on an Ansible module name: `renderedPreview` opens rendered Markdown docs inside VS Code, `openInBrowser` opens docs.ansible.com directly in your browser, and `disabled` disables module Ctrl+Click."
+          "description": "Action to perform when Ctrl+Clicking (Go to Definition) on an Ansible module name."
         }
       }
     },
     "commands": [
       {
         "command": "ansibleLens.openOfficialDocs",
-        "title": "Ansible Lens: Open Official Docs"
+        "category": "Ansible Lens",
+        "title": "Open Official Docs"
       },
       {
         "command": "ansibleLens.refreshMetadata",
-        "title": "Ansible Lens: Refresh Collection Metadata"
+        "category": "Ansible Lens",
+        "title": "Refresh Collection Metadata"
       },
       {
         "command": "ansibleLens.convertFileToFqcn",
-        "title": "Ansible Lens: Convert File to FQCN"
+        "category": "Ansible Lens",
+        "title": "Convert File to FQCN"
       },
       {
         "command": "ansibleLens.copyDiagnosticsInfo",
-        "title": "Ansible Lens: Copy Diagnostics Info"
+        "category": "Ansible Lens",
+        "title": "Copy Diagnostics Info"
       }
     ],
     "grammars": [
