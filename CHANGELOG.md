@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- **Marketplace & Open VSX Metadata:** Cleaned canonical `repository.url`, routed Marketplace Q&A to GitHub Discussions, added Open VSX install instructions and multi-editor compatibility notes (VS Code, Cursor, Windsurf, VSCodium, and cloud IDEs), and added a top-of-page GitHub link to the extension README.
+
 ## [0.1.2] - 2026-11-21
 
 ### Added
@@ -30,7 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - **Variable Lint Rules & Quick-Fixes:**
-  - Added `undefined-variable` detection across playbooks, tasks, and `.j2` templates with smart exclusions (`item`, `ansible_loop`, custom `loop_var`, magic variables, `ansible_*` facts, `{% raw %}...{% endraw %}` blocks, `| default(...)`, `is defined`, and `ansibleLens.lint.extraVars`) plus a 1-click *"Did you mean?"* Quick-Fix.
+  - Added `undefined-variable` detection across playbooks, tasks, and `.j2` templates with smart exclusions (`item`, `ansible_loop`, custom `loop_var`, magic variables, `ansible_*` facts, `{% raw %}...{% endraw %}` blocks, `| default(...)`, `is defined`, and `ansibleLens.lint.extraVars`) plus a 1-click _"Did you mean?"_ Quick-Fix.
   - Added `var-naming[no-role-prefix]` for role `defaults/`, `vars/`, `register:`, and `set_fact:` declarations with a 1-click prefix Quick-Fix.
 - **`.j2` Template Intelligence & `vars_files:` Traversal:** Added completions, 22-level variable precedence hover, Go-to-Definition, and linting inside `*.j2` templates, following relative `vars_files:` and `include_vars:` paths. Added `missing-vars-file` validation and live eviction when `vars_files:` entries change.
 - **Smart `{{ | }}` Auto-Space:** Pressing `Space` inside `{{|}}` pads to `{{ | }}` with the cursor centered, and pressing `Backspace` collapses empty `{{ | }}` back to `{{|}}` (`ansibleLens.jinja.autoSpaceBraces`).

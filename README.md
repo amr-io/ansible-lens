@@ -11,19 +11,22 @@
 
 ## Why Ansible Lens?
 
-Editing Ansible playbooks shouldn't require installing Python virtual environments, WSL2, or Docker containers just to get hover docs, autocomplete, and linting. **Ansible Lens** is a pure TypeScript Language Server & VS Code extension powered by pre-compiled static collection metadata packs. It works identically out of the box on **Windows, macOS, and Linux** in milliseconds.
+Editing Ansible playbooks shouldn't require installing Python virtual environments, WSL2, or Docker containers just to get hover docs, autocomplete, and linting. **Ansible Lens** is a pure TypeScript Language Server & extension for **VS Code, Cursor, Windsurf, and VSCodium** powered by pre-compiled static collection metadata packs. It works identically out of the box on **Windows, macOS, and Linux** in milliseconds.
 
 ---
 
 ## See It in Action
 
 ### Pylance-Style Hover & `Ctrl+Click` Module Docs
+
 ![Hover and Ctrl+Click Module Docs](./docs/assets/demo-hover-docs.gif)
 
 ### `register:` Return-Value & `.j2` Template Autocomplete
+
 ![register Return-Value and Jinja2 Template Autocomplete](./docs/assets/demo-autocomplete.gif)
 
 ### Instant (<20ms) Linting & 1-Click Quick-Fixes
+
 ![Instant Linting and Quick-Fixes](./docs/assets/demo-lint-quickfix.gif)
 
 ---
@@ -31,7 +34,7 @@ Editing Ansible playbooks shouldn't require installing Python virtual environmen
 ## Key Features
 
 - **No Python, WSL, or Docker:** Runs natively in pure Node.js/TypeScript on Windows, macOS, and Linux. Never spawns `ansible-playbook` or `ansible-lint` subprocesses while you type.
-- **Instant (<20ms) Fault-Tolerant Linting:** Concrete Syntax Tree (CST) YAML + Jinja2 scanner with 24 clean-room MIT-licensed rules, 1-click Quick-Fixes (`Convert File to FQCN`, Levenshtein *"Did you mean?"*, `var-naming[no-role-prefix]`), and debounced incremental revalidation.
+- **Instant (<20ms) Fault-Tolerant Linting:** Concrete Syntax Tree (CST) YAML + Jinja2 scanner with 24 clean-room MIT-licensed rules, 1-click Quick-Fixes (`Convert File to FQCN`, Levenshtein _"Did you mean?"_, `var-naming[no-role-prefix]`), and debounced incremental revalidation.
 - **Pylance-Style Hover & `Ctrl+Click` Module Docs:** Rich Markdown hover cards with parameter tables, defaults, `choices`, and return schemas — plus configurable `Ctrl+Click` (`renderedPreview`, `openInBrowser`, or `disabled`) with no permanent underlines.
 - **`register:` Return-Value Type Inference (`loop:`-Aware):** Autocompletes registered fields (e.g. `webapp_version_file.stat.exists`, `.rc`, `.stdout`, and `.results[].*` when `loop:` is used) across tasks, multi-line `when:` lists, and `.j2` templates.
 - **22-Level Cross-File Variable Intelligence & `.j2` Templates:** Tracks `defaults/`, `vars/`, `group_vars/`, `host_vars/`, relative `vars_files:` (with `missing-vars-file` validation & cache eviction), `include_vars:`, inventory, `set_fact:`, and `register:`, with scoped completion ranking (`0_` role-local → `1_` shared → `2_` other roles → `3_` magic vars) and smart `{{ | }}` auto-spacing.
@@ -43,17 +46,17 @@ Editing Ansible playbooks shouldn't require installing Python virtual environmen
 
 ## Comparison: Ansible Lens vs. `redhat.ansible`
 
-| Feature | **Ansible Lens** (`amr-io.ansible-lens`) | **Red Hat Ansible** (`redhat.ansible`) |
-| :--- | :--- | :--- |
-| **Native Windows support (no WSL/Docker)** | **Yes — 100% native** | Requires WSL or Execution Environment container |
-| **Python / `ansible-core` / `ansible-lint` required** | **No** | Required for linting & full module docs |
-| **Lint latency (300-line playbook)** | **~10.7 ms** (in-process) | ~2,622 ms (Python `ansible-lint` subprocess) |
-| **Smart `redhat.vscode-yaml` coexistence** | **Yes** (auto-detects Ansible vs. K8s/GHA/Compose) | Requires changing language mode to `ansible` |
-| **`register:` return-value autocomplete** | **Yes** (`loop:`-aware & nested `.stat.*`) | Limited |
-| **22-level variable precedence hover** | **Yes** | No |
-| **`.j2` template IntelliSense & `{{ \| }}` auto-space** | **Yes** | Limited |
-| **License** | **MIT** (clean-room TypeScript) | GPL-3.0 (`ansible-lint` / `ansible-core`) |
-| **Telemetry** | **No telemetry** | Optional Red Hat telemetry |
+| Feature                                                 | **Ansible Lens** (`amr-io.ansible-lens`)           | **Red Hat Ansible** (`redhat.ansible`)          |
+| :------------------------------------------------------ | :------------------------------------------------- | :---------------------------------------------- |
+| **Native Windows support (no WSL/Docker)**              | **Yes — 100% native**                              | Requires WSL or Execution Environment container |
+| **Python / `ansible-core` / `ansible-lint` required**   | **No**                                             | Required for linting & full module docs         |
+| **Lint latency (300-line playbook)**                    | **~10.7 ms** (in-process)                          | ~2,622 ms (Python `ansible-lint` subprocess)    |
+| **Smart `redhat.vscode-yaml` coexistence**              | **Yes** (auto-detects Ansible vs. K8s/GHA/Compose) | Requires changing language mode to `ansible`    |
+| **`register:` return-value autocomplete**               | **Yes** (`loop:`-aware & nested `.stat.*`)         | Limited                                         |
+| **22-level variable precedence hover**                  | **Yes**                                            | No                                              |
+| **`.j2` template IntelliSense & `{{ \| }}` auto-space** | **Yes**                                            | Limited                                         |
+| **License**                                             | **MIT** (clean-room TypeScript)                    | GPL-3.0 (`ansible-lint` / `ansible-core`)       |
+| **Telemetry**                                           | **No telemetry**                                   | Optional Red Hat telemetry                      |
 
 ---
 
@@ -61,10 +64,10 @@ Editing Ansible playbooks shouldn't require installing Python virtual environmen
 
 Measured on GitHub Actions `ubuntu-latest` (4 vCPU AMD EPYC 9V45, 15.6 GB RAM, Node.js `v22.23.5`, `ansible-lint 26.11.0` / `ansible-core 2.21.6`) over 5 runs on the same 302-line (49-task) playbook via [`.github/workflows/benchmarks.yml`](./.github/workflows/benchmarks.yml) ([latest run](https://github.com/amr-io/ansible-lens/actions/runs/44958397058)):
 
-| Tool | Runtime | Median | 5-Run Timings |
-| :--- | :--- | ---: | :--- |
-| **Ansible Lens** (in-process LSP) | Pure TypeScript / Node.js | **10.73 ms** | `9.11, 16.38, 10.73, 11.81, 6.47 ms` |
-| **ansible-lint** (CLI) | Python | **2,622.4 ms** | `3090.0, 2606.4, 2862.1, 2576.5, 2622.4 ms` |
+| Tool                              | Runtime                   |         Median | 5-Run Timings                               |
+| :-------------------------------- | :------------------------ | -------------: | :------------------------------------------ |
+| **Ansible Lens** (in-process LSP) | Pure TypeScript / Node.js |   **10.73 ms** | `9.11, 16.38, 10.73, 11.81, 6.47 ms`        |
+| **ansible-lint** (CLI)            | Python                    | **2,622.4 ms** | `3090.0, 2606.4, 2862.1, 2576.5, 2622.4 ms` |
 
 **Result:** **~244× faster** median analysis time with no Python subprocess overhead.
 
@@ -81,6 +84,18 @@ code --install-extension amr-io.ansible-lens
 ```
 
 Open any Ansible playbook, role, or `.j2` template — Ansible Lens activates automatically with no configuration.
+
+### Open VSX (Cursor, Windsurf, VSCodium & Cloud IDEs)
+
+Install from the [Open VSX Registry](https://open-vsx.org/extension/amr-io/ansible-lens), search **`Ansible Lens`** in your editor's Extensions view, or run:
+
+```bash
+cursor --install-extension amr-io.ansible-lens
+# or for VSCodium:
+codium --install-extension amr-io.ansible-lens
+```
+
+Works across Open VSX-compatible editors including **Cursor, Windsurf, VSCodium, Kiro, Antigravity, Code - OSS, Eclipse Theia**, and cloud IDEs like **Gitpod, Google Cloud Workstations, and Red Hat OpenShift Dev Spaces**.
 
 ### Offline / Verifiable `.vsix` Install
 
