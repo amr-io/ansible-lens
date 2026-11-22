@@ -13,6 +13,19 @@ Editing Ansible playbooks shouldn't require installing Python virtual environmen
 
 ---
 
+## See It in Action
+
+### Pylance-Style Hover & `Ctrl+Click` Module Docs
+![Hover and Ctrl+Click Module Docs](./docs/assets/demo-hover-docs.gif)
+
+### `register:` Return-Value & `.j2` Template Autocomplete
+![register Return-Value and Jinja2 Template Autocomplete](./docs/assets/demo-autocomplete.gif)
+
+### Instant (<20ms) Linting & 1-Click Quick-Fixes
+![Instant Linting and Quick-Fixes](./docs/assets/demo-lint-quickfix.gif)
+
+---
+
 ## Key Features
 
 - **Zero Python, WSL, or Docker:** Runs natively in pure Node.js/TypeScript on Windows, macOS, and Linux. Never spawns `ansible-playbook` or `ansible-lint` subprocesses while you type.
