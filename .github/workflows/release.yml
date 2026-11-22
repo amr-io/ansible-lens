@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build, Verify & Publish GitHub Release
+    name: Build, Verify & Publish Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -86,3 +86,6 @@ jobs:
             packages/client/*.vsix
             sbom.cdx.json
             SHA256SUMS.txt
+
+      - name: Publish to Visual Studio Marketplace (OIDC Trusted Publishing)
+        run: npx --no-install @vscode/vsce publish --oidc --packagePath packages/client/*.vsix
