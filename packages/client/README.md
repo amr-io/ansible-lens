@@ -1,5 +1,7 @@
 # Ansible Lens
 
+[![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/amr-io.ansible-lens?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=amr-io.ansible-lens)
+[![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/amr-io.ansible-lens)](https://marketplace.visualstudio.com/items?itemName=amr-io.ansible-lens)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/amr-io/ansible-lens/badge)](https://scorecard.dev/viewer/?uri=github.com/amr-io/ansible-lens)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
@@ -48,6 +50,16 @@ Measured on GitHub Actions `ubuntu-latest` (4 vCPU AMD EPYC 9V45, Node.js `v22.2
 | :--- | :--- | ---: |
 | **Ansible Lens** (in-process LSP) | Pure TypeScript / Node.js | **10.73 ms** |
 | **ansible-lint** (CLI) | Python | **2,622.4 ms** |
+
+## Install
+
+Search **`Ansible Lens`** (`amr-io.ansible-lens`) in the VS Code Extensions view, or run:
+
+```bash
+code --install-extension amr-io.ansible-lens
+```
+
+For offline or SLSA-verified `.vsix` installs, download the release artifacts from [GitHub Releases](https://github.com/amr-io/ansible-lens/releases).
 
 ## Documentation
 

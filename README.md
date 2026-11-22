@@ -1,5 +1,7 @@
 # Ansible Lens
 
+[![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/amr-io.ansible-lens?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=amr-io.ansible-lens)
+[![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/amr-io.ansible-lens)](https://marketplace.visualstudio.com/items?itemName=amr-io.ansible-lens)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/amr-io/ansible-lens/badge)](https://scorecard.dev/viewer/?uri=github.com/amr-io/ansible-lens)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
@@ -70,13 +72,24 @@ Measured on GitHub Actions `ubuntu-latest` (4 vCPU AMD EPYC 9V45, 15.6 GB RAM, N
 
 ## Quick Start
 
+### VS Code Marketplace (Recommended)
+
+Search **`Ansible Lens`** (`amr-io.ansible-lens`) in the VS Code Extensions view, or install from the command line:
+
+```bash
+code --install-extension amr-io.ansible-lens
+```
+
+Open any Ansible playbook, role, or `.j2` template — Ansible Lens activates automatically with zero configuration.
+
+### Offline / Verifiable `.vsix` Install
+
 1. Download the latest `ansible-lens-<version>.vsix`, `sbom.cdx.json`, and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/amr-io/ansible-lens/releases).
 2. Verify the checksum (`sha256sum -c SHA256SUMS.txt`) and SLSA build provenance (`gh attestation verify ansible-lens-<version>.vsix --repo amr-io/ansible-lens`).
 3. Install in VS Code:
    ```bash
    code --install-extension ansible-lens-<version>.vsix
    ```
-4. Open any Ansible playbook, role, or `.j2` template — Ansible Lens activates automatically with zero configuration.
 
 ---
 
