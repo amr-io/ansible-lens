@@ -117,6 +117,8 @@ describe('Ansible Lens VS Code Client — Smart Hybrid Activation, Grammar, Logg
     const pkgJson = JSON.parse(fs.readFileSync(path.join(CLIENT_ROOT, 'package.json'), 'utf8')) as {
       description: string;
       icon: string;
+      repository: { type: string; url: string };
+      qna: string;
       contributes: {
         commands: Array<{ command: string; title: string }>;
         grammars: Array<{ scopeName: string; path: string; injectTo: string[] }>;
@@ -126,6 +128,8 @@ describe('Ansible Lens VS Code Client — Smart Hybrid Activation, Grammar, Logg
     expect(pkgJson.description).toBe(
       'Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2. No Python, WSL, or Docker.',
     );
+    expect(pkgJson.repository.url).toBe('https://github.com/amr-io/ansible-lens');
+    expect(pkgJson.qna).toBe('https://github.com/amr-io/ansible-lens/discussions');
     const readmeText = fs.readFileSync(path.join(CLIENT_ROOT, 'README.md'), 'utf8');
     expect(readmeText).toContain('Ansible® is a registered trademark of Red Hat, Inc.');
     expect(pkgJson.icon).toBe('media/icon.png');
