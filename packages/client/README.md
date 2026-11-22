@@ -9,6 +9,17 @@
 
 **Ansible Lens** is a pure TypeScript, zero-dependency Ansible Language Server & linter powered by static collection metadata packs. It runs natively on **Windows, macOS, and Linux** with zero Python, zero WSL, and zero Docker.
 
+## See It in Action
+
+### Pylance-Style Hover & `Ctrl+Click` Module Docs
+![Hover and Ctrl+Click Module Docs](https://raw.githubusercontent.com/amr-io/ansible-lens/main/docs/assets/demo-hover-docs.gif)
+
+### `register:` Return-Value & `.j2` Template Autocomplete
+![register Return-Value and Jinja2 Template Autocomplete](https://raw.githubusercontent.com/amr-io/ansible-lens/main/docs/assets/demo-autocomplete.gif)
+
+### Instant (<20ms) Linting & 1-Click Quick-Fixes
+![Instant Linting and Quick-Fixes](https://raw.githubusercontent.com/amr-io/ansible-lens/main/docs/assets/demo-lint-quickfix.gif)
+
 ## Key Features
 
 - **Sub-20ms Fault-Tolerant Linting:** 24 clean-room MIT-licensed rules with 1-click Quick-Fixes (`Convert File to FQCN`, Levenshtein *"Did you mean?"*, `var-naming[no-role-prefix]`) and debounced incremental revalidation.
