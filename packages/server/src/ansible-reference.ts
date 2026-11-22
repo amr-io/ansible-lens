@@ -424,19 +424,14 @@ export const ANSIBLE_MAGIC_VARS: readonly JinjaItemMetadata[] = [
     description: 'The first part of inventory_hostname before the first dot.',
   },
   {
-    name: 'play_hosts',
-    signature: 'list[str]',
-    description: 'Deprecated alias for ansible_play_hosts.',
+    name: 'inventory_dir',
+    signature: 'str',
+    description: 'Directory path of the inventory source in which the current host was defined.',
   },
   {
-    name: 'ansible_play_hosts',
-    signature: 'list[str]',
-    description: 'List of active hosts in the current play run.',
-  },
-  {
-    name: 'ansible_play_batch',
-    signature: 'list[str]',
-    description: 'List of active hosts in the current serial batch.',
+    name: 'inventory_file',
+    signature: 'str',
+    description: 'File path of the inventory source in which the current host was defined.',
   },
   {
     name: 'playbook_dir',
@@ -447,6 +442,56 @@ export const ANSIBLE_MAGIC_VARS: readonly JinjaItemMetadata[] = [
     name: 'role_path',
     signature: 'str',
     description: 'The directory path of the currently executing role.',
+  },
+  {
+    name: 'role_name',
+    signature: 'str',
+    description: 'The name of the currently executing role.',
+  },
+  {
+    name: 'ansible_role_name',
+    signature: 'str',
+    description: 'The fully qualified name of the currently executing role.',
+  },
+  {
+    name: 'ansible_play_name',
+    signature: 'str',
+    description: 'The name of the currently executing play.',
+  },
+  {
+    name: 'play_hosts',
+    signature: 'list[str]',
+    description: 'Deprecated alias for ansible_play_hosts.',
+  },
+  {
+    name: 'ansible_play_hosts',
+    signature: 'list[str]',
+    description: 'List of active hosts in the current play run.',
+  },
+  {
+    name: 'ansible_play_hosts_all',
+    signature: 'list[str]',
+    description: 'List of all hosts targeted by the current play, including failed hosts.',
+  },
+  {
+    name: 'ansible_play_batch',
+    signature: 'list[str]',
+    description: 'List of active hosts in the current serial batch.',
+  },
+  {
+    name: 'ansible_limit',
+    signature: 'str',
+    description: 'Contents of the --limit CLI option for the current playbook run.',
+  },
+  {
+    name: 'ansible_run_tags',
+    signature: 'list[str]',
+    description: 'List of tags passed to --tags for the current playbook run.',
+  },
+  {
+    name: 'ansible_skip_tags',
+    signature: 'list[str]',
+    description: 'List of tags passed to --skip-tags for the current playbook run.',
   },
   {
     name: 'ansible_check_mode',
@@ -464,9 +509,104 @@ export const ANSIBLE_MAGIC_VARS: readonly JinjaItemMetadata[] = [
     description: 'Dictionary describing the active Ansible version.',
   },
   {
+    name: 'omit',
+    signature: 'sentinel',
+    description: 'Special placeholder value used with default(omit) to omit an optional module parameter.',
+  },
+  {
+    name: 'ansible_user',
+    signature: 'str',
+    description: 'Username used to connect to the target host.',
+  },
+  {
+    name: 'ansible_host',
+    signature: 'str',
+    description: 'IP address or resolvable hostname used to connect to the target host.',
+  },
+  {
+    name: 'ansible_port',
+    signature: 'int',
+    description: 'Connection port number for the target host (defaults to 22 for SSH).',
+  },
+  {
+    name: 'ansible_connection',
+    signature: 'str',
+    description: 'Connection plugin type used for the target host (e.g. ssh, local, winrm).',
+  },
+  {
+    name: 'ansible_become',
+    signature: 'bool',
+    description: 'Whether privilege escalation (become) is enabled for the host.',
+  },
+  {
+    name: 'ansible_become_user',
+    signature: 'str',
+    description: 'Target user for privilege escalation (defaults to root).',
+  },
+  {
+    name: 'ansible_become_method',
+    signature: 'str',
+    description: 'Privilege escalation method (e.g. sudo, su, pbrun, runas).',
+  },
+  {
+    name: 'ansible_python_interpreter',
+    signature: 'str',
+    description: 'Path to the Python interpreter on the target host.',
+  },
+  {
+    name: 'ansible_ssh_private_key_file',
+    signature: 'str',
+    description: 'Path to the SSH private key file used to authenticate to the host.',
+  },
+  {
+    name: 'ansible_ssh_common_args',
+    signature: 'str',
+    description: 'Extra CLI arguments appended to ssh, sftp, and scp commands.',
+  },
+  {
     name: 'ansible_facts',
     signature: 'dict',
     description: 'Dictionary containing gathered host facts.',
+  },
+  {
+    name: 'ansible_env',
+    signature: 'dict',
+    description: 'Environment variables gathered from the target host.',
+  },
+  {
+    name: 'ansible_os_family',
+    signature: 'str',
+    description: 'Gathered OS family fact (e.g. Debian, RedHat, Darwin).',
+  },
+  {
+    name: 'ansible_distribution',
+    signature: 'str',
+    description: 'Gathered OS distribution name (e.g. Ubuntu, Debian, Rocky).',
+  },
+  {
+    name: 'ansible_distribution_version',
+    signature: 'str',
+    description: 'Gathered OS distribution version string (e.g. 24.04).',
+  },
+  {
+    name: 'ansible_hostname',
+    signature: 'str',
+    description: 'Gathered short hostname of the target host.',
+  },
+  {
+    name: 'ansible_fqdn',
+    signature: 'str',
+    description: 'Gathered fully qualified domain name of the target host.',
+  },
+  {
+    name: 'ansible_default_ipv4',
+    signature: 'dict',
+    description: 'Gathered default IPv4 interface details (address, gateway, interface).',
+  },
+  {
+    name: 'ansible_architecture',
+    signature: 'str',
+    description: 'Gathered CPU architecture of the target host (e.g. x86_64, aarch64).',
   },
 ];
 

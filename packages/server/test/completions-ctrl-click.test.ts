@@ -185,23 +185,34 @@ describe('completions with explicit textEdit ranges (YAML word-pattern safe)', (
 });
 
 describe('Pylance-style Ctrl+Click module docs and zero permanent underlines', () => {
-  it('supports docsCtrlClickBehavior: renderedPreview, openInBrowser, and disabled', () => {
+  it('supports docsCtrlClickBehavior: renderedPreview, openInBrowser, and disabled with full-module LocationLink', () => {
     const service = createService();
     const text = fs.readFileSync(ROLE_TASKS, 'utf8');
     const lines = text.split('\n');
     const line = lines.findIndex((l) => l.includes('ansible.builtin.stat:'));
-    const character = (lines[line] ?? '').indexOf('ansible.builtin.stat') + 5;
+    const moduleStart = (lines[line] ?? '').indexOf('ansible.builtin.stat');
+    const character = moduleStart + 5;
 
-    // Default (`renderedPreview`): resolves to `ansible-lens-docs:` virtual URI
+    // Default (`renderedPreview`): resolves to `LocationLink` with `originSelectionRange` covering full FQCN
     expect(service.getDocsCtrlClickBehavior()).toBe('renderedPreview');
-    const locs = service.getDefinition(ROLE_URI, { line, character }, text) as Location[];
+    const locs = service.getDefinition(ROLE_URI, { line, character }, text);
     expect(locs).toHaveLength(1);
-    expect(locs[0]?.uri).toBe(buildModuleDocsUri('ansible.builtin.stat'));
-    expect(locs[0]?.uri.startsWith(`${MODULE_DOCS_SCHEME}:`)).toBe(true);
+    const link = locs[0];
+    expect(link && 'targetUri' in link).toBe(true);
+    if (link && 'targetUri' in link) {
+      expect(link.targetUri).toBe(buildModuleDocsUri('ansible.builtin.stat'));
+      expect(link.targetUri.startsWith(`${MODULE_DOCS_SCHEME}:`)).toBe(true);
+      expect(link.originSelectionRange).toEqual({
+        start: { line, character: moduleStart },
+        end: { line, character: moduleStart + 'ansible.builtin.stat'.length },
+      });
+    }
 
-    // `openInBrowser`: still resolves so the client opens docs.ansible.com in the browser
+    // `openInBrowser`: still resolves side-effect-free to `LocationLink` so Ctrl+Hover highlights full FQCN
     service.setDocsCtrlClickBehavior('openInBrowser');
-    expect(service.getDefinition(ROLE_URI, { line, character }, text)).toHaveLength(1);
+    const browserLocs = service.getDefinition(ROLE_URI, { line, character }, text);
+    expect(browserLocs).toHaveLength(1);
+    expect(browserLocs[0] && 'targetUri' in browserLocs[0]).toBe(true);
 
     // `disabled`: Ctrl+Click on module names does nothing
     service.setDocsCtrlClickBehavior('disabled');
@@ -213,6 +224,61 @@ describe('Pylance-style Ctrl+Click module docs and zero permanent underlines', (
     expect(md).toContain('## Parameters');
     expect(md).toContain('#parameter-path');
     expect(md).toContain('#return-stat/exists');
+  });
+
+  it('suggests standard Ansible special, connection, become, and fact variables with 3_ sortText', () => {
+    const service = createService();
+    const probe = withAppended([
+      '- name: Special vars probe',
+      '  ansible.builtin.debug:',
+      '    msg: "{{ ',
+    ]);
+    const items = service.getCompletions(ROLE_URI, probe.position, probe.text);
+    const byLabel = new Map(items.map((item) => [item.label, item]));
+
+    const expectedSpecialVars = [
+      'ansible_user',
+      'ansible_host',
+      'ansible_port',
+      'ansible_connection',
+      'ansible_become',
+      'ansible_become_user',
+      'ansible_become_method',
+      'ansible_python_interpreter',
+      'ansible_ssh_private_key_file',
+      'ansible_ssh_common_args',
+      'inventory_hostname',
+      'inventory_hostname_short',
+      'inventory_dir',
+      'inventory_file',
+      'playbook_dir',
+      'role_path',
+      'role_name',
+      'ansible_role_name',
+      'ansible_play_name',
+      'ansible_play_hosts_all',
+      'ansible_limit',
+      'ansible_run_tags',
+      'ansible_skip_tags',
+      'ansible_env',
+      'ansible_os_family',
+      'ansible_distribution',
+      'ansible_distribution_version',
+      'ansible_hostname',
+      'ansible_fqdn',
+      'ansible_default_ipv4',
+      'ansible_architecture',
+      'hostvars',
+      'groups',
+      'group_names',
+      'omit',
+    ];
+
+    for (const varName of expectedSpecialVars) {
+      const item = byLabel.get(varName);
+      expect(item, `Expected completion for special variable '${varName}'`).toBeDefined();
+      expect(item?.sortText).toBe(`3_${varName}`);
+    }
   });
 
   it('renders an offline docs page with a docs.ansible.com link for unloaded collections', () => {

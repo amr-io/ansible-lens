@@ -122,49 +122,59 @@ async function verifyFlatFixture(workspaceRoot: string): Promise<void> {
   );
   assert.equal(links?.length ?? 0, 0, 'DocumentLinkProvider must return 0 links by default');
 
-  // Ctrl+Click on module name returns an ansible-lens-docs: virtual document with docs.ansible.com.
+  // Ctrl+Click on module name returns a LocationLink with originSelectionRange spanning the full FQCN.
   const defs = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
     'vscode.executeDefinitionProvider',
     doc.uri,
     statPos,
   );
   assert.equal(defs?.length, 1);
-  const firstDef = defs?.[0];
-  const targetUri =
-    firstDef && 'targetUri' in firstDef ? firstDef.targetUri : (firstDef as vscode.Location).uri;
+  const firstDef = defs?.[0] as vscode.LocationLink;
+  assert.ok(firstDef && 'targetUri' in firstDef, 'Module definition must return LocationLink');
+  assert.ok(
+    firstDef.originSelectionRange,
+    'Module LocationLink must include originSelectionRange for full FQCN Ctrl+Hover highlight',
+  );
+  const statStart = doc.lineAt(statPos.line).text.indexOf('ansible.builtin.stat');
+  assert.equal(firstDef.originSelectionRange.start.character, statStart);
+  assert.equal(
+    firstDef.originSelectionRange.end.character,
+    statStart + 'ansible.builtin.stat'.length,
+  );
+  const targetUri = firstDef.targetUri;
   assert.equal(targetUri.scheme, 'ansible-lens-docs');
   const docsDoc = await vscode.workspace.openTextDocument(targetUri);
   assert.ok(containsAnsibleDocsUrl(docsDoc.lineAt(0).text ?? ''));
 
-  // openInBrowser mode intercepts ansible-lens-docs: in middleware and opens zero .md tabs.
+  // openInBrowser mode keeps provideDefinition side-effect-free (so Ctrl+Hover never launches a browser)
+  // and closes the temporary ansible-lens-docs: editor when actually opened via click.
   const cfg = vscode.workspace.getConfiguration('ansibleLens');
   await cfg.update('docs.ctrlClickBehavior', 'openInBrowser', vscode.ConfigurationTarget.Global);
   try {
-    const activeUriBefore = vscode.window.activeTextEditor?.document.uri.toString();
     const openInBrowserDefs = await vscode.commands.executeCommand<
       (vscode.Location | vscode.LocationLink)[]
     >('vscode.executeDefinitionProvider', doc.uri, statPos);
     assert.equal(
-      openInBrowserDefs?.length ?? 0,
-      0,
-      'openInBrowser middleware must return undefined/empty so VS Code never opens an unrendered .md tab',
+      openInBrowserDefs?.length,
+      1,
+      'provideDefinition in openInBrowser mode must stay side-effect-free and return LocationLink for Ctrl+Hover',
     );
-    const docsTabs = vscode.window.tabGroups.all.flatMap((group) =>
-      group.tabs.filter(
-        (tab) =>
-          tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'ansible-lens-docs',
-      ),
-    );
-    assert.equal(
-      docsTabs.length,
-      0,
-      'Zero ansible-lens-docs tabs may be opened in openInBrowser mode',
-    );
-    assert.equal(
-      vscode.window.activeTextEditor?.document.uri.toString(),
-      activeUriBefore,
-      'Active editor must remain unchanged in openInBrowser mode',
-    );
+    const hoverLink = openInBrowserDefs?.[0] as vscode.LocationLink;
+    assert.ok(hoverLink && 'targetUri' in hoverLink);
+    assert.equal(hoverLink.targetUri.scheme, 'ansible-lens-docs');
+
+    // Simulate actual Ctrl+Click opening the virtual docs editor -> onDidChangeActiveTextEditor closes it.
+    await vscode.window.showTextDocument(hoverLink.targetUri, { preview: true });
+    await waitUntil('temporary ansible-lens-docs tab closed in openInBrowser mode', async () => {
+      const docsTabs = vscode.window.tabGroups.all.flatMap((group) =>
+        group.tabs.filter(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.scheme === 'ansible-lens-docs',
+        ),
+      );
+      return docsTabs.length === 0 ? true : undefined;
+    });
   } finally {
     await cfg.update('docs.ctrlClickBehavior', undefined, vscode.ConfigurationTarget.Global);
   }
@@ -212,13 +222,13 @@ async function verifyNestedMonorepoFixture(workspaceRoot: string): Promise<void>
   );
   assert.equal(links?.length ?? 0, 0);
 
-  const moduleDefs = await vscode.commands.executeCommand<vscode.Location[]>(
-    'vscode.executeDefinitionProvider',
-    roleDoc.uri,
-    statPos,
-  );
-  assert.equal(moduleDefs?.[0]?.uri.scheme, 'ansible-lens-docs');
-  const renderedDocs = await vscode.workspace.openTextDocument(moduleDefs![0]!.uri);
+  const moduleDefs = await vscode.commands.executeCommand<
+    (vscode.Location | vscode.LocationLink)[]
+  >('vscode.executeDefinitionProvider', roleDoc.uri, statPos);
+  const moduleLink = moduleDefs?.[0] as vscode.LocationLink;
+  assert.ok(moduleLink && 'targetUri' in moduleLink);
+  assert.equal(moduleLink.targetUri.scheme, 'ansible-lens-docs');
+  const renderedDocs = await vscode.workspace.openTextDocument(moduleLink.targetUri);
   assert.ok(containsAnsibleDocsUrl(renderedDocs.getText()));
 
   const regRefPos = findLineAndColumn(roleDoc, '- not webapp_version_file.stat.isdir');

@@ -62,8 +62,9 @@ export async function showRenderedDocsPreview(
 }
 
 /**
- * When `ansibleLens.docs.ctrlClickBehavior` is set to `openInBrowser`, open the module's
- * official `docs.ansible.com` URL directly in the user's browser and close the virtual tab.
+ * When `ansibleLens.docs.ctrlClickBehavior` is set to `openInBrowser`, close the temporary
+ * virtual docs editor first and then open the module's official `docs.ansible.com` URL
+ * in the user's browser.
  */
 export async function openModuleDocsInBrowser(
   editor: vscode.TextEditor | undefined,
@@ -74,6 +75,7 @@ export async function openModuleDocsInBrowser(
   const docUri = editor.document.uri;
   const moduleName = parseModuleNameFromDocsPath(docUri.path);
   const { buildOfflineDocUrl } = await import('./docs-uri.js');
-  await vscode.env.openExternal(vscode.Uri.parse(buildOfflineDocUrl(moduleName)));
-  await closeDocsVirtualTab(docUri);
+  const url = vscode.Uri.parse(buildOfflineDocUrl(moduleName));
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  void vscode.env.openExternal(url);
 }

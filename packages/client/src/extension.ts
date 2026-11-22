@@ -19,9 +19,9 @@ import {
   GET_MODULE_DOCS_REQUEST,
   MODULE_DOCS_SCHEME,
   ModuleDocsContentProvider,
+  openModuleDocsInBrowser,
   showRenderedDocsPreview,
 } from './docs-provider.js';
-import { resolveOpenInBrowserUrl } from './docs-uri.js';
 import { evaluateJinjaBraceAutoSpace } from './jinja-autospace.js';
 import { createClientLogger, type ClientLogger } from './logger.js';
 
@@ -215,32 +215,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     initializationOptions: readWorkspaceSettings(),
     synchronize: {
       fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{yml,yaml,ini,cfg,j2}'),
-    },
-    middleware: {
-      provideDefinition: async (document, position, token, next) => {
-        const result = await next(document, position, token);
-        if (token.isCancellationRequested) {
-          return undefined;
-        }
-        const behavior = vscode.workspace
-          .getConfiguration('ansibleLens')
-          .get<DocsCtrlClickBehavior>('docs.ctrlClickBehavior', 'renderedPreview');
-        if (behavior === 'openInBrowser' && result) {
-          const docsUrl = resolveOpenInBrowserUrl(result);
-          if (docsUrl) {
-            try {
-              await vscode.env.openExternal(vscode.Uri.parse(docsUrl));
-            } catch (error) {
-              logger.warn('Failed to open module documentation in browser', {
-                url: docsUrl,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-            return undefined;
-          }
-        }
-        return result;
-      },
     },
   };
 
@@ -486,11 +460,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const behavior = vscode.workspace
         .getConfiguration('ansibleLens')
         .get<DocsCtrlClickBehavior>('docs.ctrlClickBehavior', 'renderedPreview');
-      if (behavior !== 'renderedPreview') {
+      if (behavior === 'disabled') {
         return;
       }
       try {
-        await showRenderedDocsPreview(editor);
+        if (behavior === 'openInBrowser') {
+          await openModuleDocsInBrowser(editor);
+        } else {
+          await showRenderedDocsPreview(editor);
+        }
       } catch (error) {
         logger.warn('Failed to handle module docs Ctrl+Click action', {
           behavior,
