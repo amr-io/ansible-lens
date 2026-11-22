@@ -1,6 +1,7 @@
 # Ansible Lens
 
 [![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/amr-io.ansible-lens.svg?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=amr-io.ansible-lens)
+[![Open VSX](https://img.shields.io/open-vsx/v/amr-io/ansible-lens?label=Open%20VSX)](https://open-vsx.org/extension/amr-io/ansible-lens)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/amr-io/ansible-lens/badge)](https://scorecard.dev/viewer/?uri=github.com/amr-io/ansible-lens)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
