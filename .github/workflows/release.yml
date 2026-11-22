@@ -16,6 +16,7 @@ jobs:
   release:
     name: Build, Verify & Publish Release
     runs-on: ubuntu-latest
+    environment: marketplace
     permissions:
       contents: write
       id-token: write
