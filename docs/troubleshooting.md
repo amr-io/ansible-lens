@@ -48,7 +48,7 @@ Ansible Lens is specifically engineered to **coexist cleanly** with `redhat.vsco
 If you have `redhat.ansible` installed alongside **Ansible Lens**:
 
 - Both extensions attach Language Servers to Ansible files, which can produce duplicate hover tooltips and require Python/WSL from `redhat.ansible`.
-- **Recommendation:** Disable `redhat.ansible` for the workspace (_Extensions > Ansible > Disable (Workspace)_) and keep files in standard `yaml` (or `ansible`) mode so **Ansible Lens** provides zero-dependency, sub-20ms completions, `Ctrl+Click` module docs, and linting natively on Windows, macOS, and Linux.
+- **Recommendation:** Disable `redhat.ansible` for the workspace (_Extensions > Ansible > Disable (Workspace)_) and keep files in standard `yaml` (or `ansible`) mode so **Ansible Lens** provides standalone, sub-20ms completions, `Ctrl+Click` module docs, and linting natively on Windows, macOS, and Linux.
 
 ---
 
@@ -56,7 +56,7 @@ If you have `redhat.ansible` installed alongside **Ansible Lens**:
 
 ### How Collection Metadata Works
 
-- **Bundled Offline Pack:** `ansible.builtin` (`ansible.builtin.json.gz`) is bundled inside the `.vsix` and works 100% offline with zero network calls.
+- **Bundled Offline Pack:** `ansible.builtin` (`ansible.builtin.json.gz`) is bundled inside the `.vsix` and works 100% offline with no network calls.
 - **90+ Community Collection Packs:** The `metadata-latest` GitHub Release publishes 90+ `.json.gz` collection packs (`community.general`, `ansible.posix`, `community.docker`, `community.crypto`, `amazon.aws`, `kubernetes.core`, etc.) plus a SHA-256 `manifest.json`.
 - **Silent Auto-Download:** When `ansibleLens.metadata.autoDownload` is `true` (default), encountering a task like `ansible.posix.sysctl:` automatically downloads and SHA-256-verifies `ansible.posix.json.gz` into `~/.cache/ansible-lens/metadata/` and refreshes diagnostics in place.
 

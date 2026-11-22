@@ -1,14 +1,15 @@
 # Ansible Lens
 
 [![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/amr-io.ansible-lens.svg?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=amr-io.ansible-lens)
+[![Open VSX](https://img.shields.io/open-vsx/v/amr-io/ansible-lens?label=Open%20VSX)](https://open-vsx.org/extension/amr-io/ansible-lens)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/amr-io/ansible-lens/badge)](https://scorecard.dev/viewer/?uri=github.com/amr-io/ansible-lens)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-**Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2 — zero Python, WSL, or Docker required.**
+**Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2 — no Python, WSL, or Docker required.**
 
 ## Why Ansible Lens?
 
-**Ansible Lens** is a pure TypeScript, zero-dependency Ansible Language Server & linter powered by static collection metadata packs. It runs natively on **Windows, macOS, and Linux** with zero Python, zero WSL, and zero Docker.
+**Ansible Lens** is a pure TypeScript Ansible Language Server & linter powered by static collection metadata packs. It runs natively on **Windows, macOS, and Linux** with no Python, WSL, or Docker required.
 
 ## See It in Action
 
@@ -24,7 +25,7 @@
 ## Key Features
 
 - **Sub-20ms Fault-Tolerant Linting:** 24 clean-room MIT-licensed rules with 1-click Quick-Fixes (`Convert File to FQCN`, Levenshtein *"Did you mean?"*, `var-naming[no-role-prefix]`) and debounced incremental revalidation.
-- **Pylance-Style Hover & `Ctrl+Click` Docs:** Rich Markdown hover cards with parameter tables, defaults, `choices`, and return schemas, plus configurable `Ctrl+Click` (`renderedPreview`, `openInBrowser`, `disabled`) with zero permanent underlines.
+- **Pylance-Style Hover & `Ctrl+Click` Docs:** Rich Markdown hover cards with parameter tables, defaults, `choices`, and return schemas, plus configurable `Ctrl+Click` (`renderedPreview`, `openInBrowser`, `disabled`) with no permanent underlines.
 - **`register:` Return-Value Inference (`loop:`-Aware):** Autocompletes registered fields (`.stat.*`, `.rc`, `.stdout`, `.results[].*`) across tasks, multi-line `when:` lists, and `.j2` templates.
 - **22-Level Cross-File Variable Intelligence & `.j2` Templates:** Tracks `defaults/`, `vars/`, `group_vars/`, `host_vars/`, relative `vars_files:` (with `missing-vars-file` validation & cache eviction), `include_vars:`, inventory, `set_fact:`, and `register:`, with scoped completion ranking and smart `{{ | }}` auto-spacing.
 - **Smart Hybrid Activation:** Coexists cleanly with `redhat.vscode-yaml` while ignoring Kubernetes, Docker Compose, and GitHub Actions YAML.
@@ -35,7 +36,7 @@
 | Feature | **Ansible Lens** | **Red Hat Ansible** |
 | :--- | :--- | :--- |
 | **Native Windows (no WSL/Docker)** | **Yes** | Requires WSL or EE container |
-| **Python / `ansible-lint` required** | **Zero** | Required |
+| **Python / `ansible-lint` required** | **No** | Required |
 | **Lint latency (300-line playbook)** | **~10.7 ms** | ~2,622 ms |
 | **`register:` return-value autocomplete** | **Yes** (`loop:`-aware) | Limited |
 | **22-level variable precedence hover** | **Yes** | No |
@@ -68,7 +69,7 @@ For offline or SLSA-verified `.vsix` installs, download the release artifacts fr
 
 ## Privacy
 
-**Zero Telemetry:** Ansible Lens collects zero analytics or crash reports and makes no outbound requests other than optional SHA-256-verified collection metadata pack downloads.
+**No Telemetry:** Ansible Lens collects no analytics or crash reports and makes no outbound requests other than optional SHA-256-verified collection metadata pack downloads.
 
 ## License
 

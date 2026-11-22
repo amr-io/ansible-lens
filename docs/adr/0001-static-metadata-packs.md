@@ -17,5 +17,5 @@ Existing Ansible IDE tools invoke `ansible-doc`, `ansible-playbook --syntax-chec
 
 ## Consequences
 
-- **Positive:** 100% native cross-platform execution on Windows, macOS, and Linux with zero Python/WSL/Docker required; sub-20ms startup and linting.
+- **Positive:** 100% native cross-platform execution on Windows, macOS, and Linux with no Python/WSL/Docker required; sub-20ms startup and linting.
 - **Negative:** Newly released upstream Galaxy collections require either a weekly automated metadata release (`build-metadata.yml`) or local workspace extraction.

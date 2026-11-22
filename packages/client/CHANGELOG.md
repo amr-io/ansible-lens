@@ -17,7 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - **Publisher & Branding:** Moved repository and Marketplace publisher to `amr-io`, refreshed the extension icon with a crisp 512×512 vector render, and polished the VS Code Settings, Features, and Changelog tabs.
-- **README Overhaul:** Rewrote the README with a side-by-side comparison against `redhat.ansible`, verified benchmark numbers (~10.7 ms vs. ~2,622 ms `ansible-lint`), and a Zero Telemetry commitment.
+- **README Overhaul:** Rewrote the README with a side-by-side comparison against `redhat.ansible`, verified benchmark numbers (~10.7 ms vs. ~2,622 ms `ansible-lint`), and a No Telemetry commitment.
 
 ### Fixed
 
@@ -35,7 +35,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **`.j2` Template Intelligence & `vars_files:` Traversal:** Added completions, 22-level variable precedence hover, Go-to-Definition, and linting inside `*.j2` templates, following relative `vars_files:` and `include_vars:` paths. Added `missing-vars-file` validation and live eviction when `vars_files:` entries change.
 - **Smart `{{ | }}` Auto-Space:** Pressing `Space` inside `{{|}}` pads to `{{ | }}` with the cursor centered, and pressing `Backspace` collapses empty `{{ | }}` back to `{{|}}` (`ansibleLens.jinja.autoSpaceBraces`).
 - **Silent Collection Auto-Download:** Automatically downloads metadata for 90+ Ansible community collections in the background with SHA-256 verification and a status-bar indicator.
-- **Configurable `Ctrl+Click` Module Docs & Zero Permanent Underlines:** Removed permanent link underlines and added `ansibleLens.docs.ctrlClickBehavior` (`renderedPreview`, `openInBrowser`, `disabled`).
+- **Configurable `Ctrl+Click` Module Docs & No Permanent Underlines:** Removed permanent link underlines and added `ansibleLens.docs.ctrlClickBehavior` (`renderedPreview`, `openInBrowser`, `disabled`).
 - **Settings, Diagnostics Command & Docs:** Exposed live `ansibleLens.lint.*`, `ansibleLens.metadata.*`, and `ansibleLens.ansible.rootPaths` settings, added `Ansible Lens: Copy Diagnostics Info`, and added `docs/rules.md`, `docs/configuration.md`, and `docs/troubleshooting.md`.
 
 ### Changed
@@ -54,7 +54,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- Initial MIT-licensed release of **Ansible Lens** — a zero-dependency TypeScript Ansible Language Server and VS Code extension requiring no Python, WSL, or Docker.
+- Initial MIT-licensed release of **Ansible Lens** — a pure TypeScript Ansible Language Server and VS Code extension requiring no Python, WSL, or Docker.
 - Fault-tolerant YAML and Jinja2 parser with sub-20ms linting and 1-click Quick-Fixes (including `Convert File to FQCN`).
 - Offline-bundled `ansible.builtin` metadata, lazy-loaded collection packs with SHA-256 verification, and static `.py` module docstring extraction.
 - `register:` return-value type inference (`loop:`-aware), 22-level cross-file variable precedence hover, and workspace project integrity checks.

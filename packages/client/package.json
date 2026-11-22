@@ -1,7 +1,7 @@
 {
   "name": "ansible-lens",
   "displayName": "Ansible Lens",
-  "description": "Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2. Zero Python, WSL, or Docker.",
+  "description": "Fast Ansible language server, IntelliSense, and <20ms linter for YAML & Jinja2. No Python, WSL, or Docker.",
   "version": "0.1.2",
   "publisher": "amr-io",
   "license": "MIT",

@@ -1,6 +1,6 @@
 # Ansible Lens — Clean-Room Lint & Project Integrity Rules Reference
 
-All 24 rules in **Ansible Lens** are implemented clean-room in pure TypeScript under the **MIT License** (zero Python, zero `ansible-lint`, zero GPL code). Every rule runs in memory in under 20ms and supports per-rule severity overrides via `ansibleLens.lint.rules`.
+All 24 rules in **Ansible Lens** are implemented clean-room in pure TypeScript under the **MIT License** (no Python, no `ansible-lint`, no GPL code). Every rule runs in memory in under 20ms and supports per-rule severity overrides via `ansibleLens.lint.rules`.
 
 ---
 
@@ -314,7 +314,7 @@ Detects plaintext credentials assigned to secret-like keys (`password`, `passwd`
 
 Flags Jinja2 variables in playbooks, tasks, and `.j2` templates that are not defined anywhere in the 22-level workspace variable graph (`defaults/`, `vars/`, `group_vars/`, `host_vars/`, `vars_files:`, `include_vars:`, inventory, play/block/task `vars:`, `set_fact:`, `register:`).
 
-**Smart Zero-Noise Exclusions:**
+**Smart Noise Exclusions:**
 
 - `item`, `ansible_loop`, and custom `loop_control.loop_var` identifiers
 - Ansible magic variables (`hostvars`, `groups`, `group_names`, `inventory_hostname`, `playbook_dir`, `role_path`, `omit`, etc.) and `ansible_*` facts
